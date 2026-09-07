@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive"] }
+http = "1"
 rmcp = { version = "3.2", features = ["client", "server", "macros", "transport-child-process", "transport-io", "transport-streamable-http-client-reqwest"] }
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
