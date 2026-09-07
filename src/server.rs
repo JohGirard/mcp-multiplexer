@@ -112,6 +112,15 @@ impl Aggregator {
         -> Result<CallToolResult, ErrorData> {
         self.ups.call(&server, &tool, arguments).await.map_err(internal)
     }
+
+    /// Split a `server__tool` name into (server, tool) by longest matching
+    /// expose-server prefix — server names may themselves contain `__`.
+    pub fn route_exposed<'n>(&self, name: &'n str) -> Option<(&str, &'n str)> {
+        self.cfg.mcp_servers.iter()
+            .filter(|(_, sc)| sc.expose)
+            .filter_map(|(n, _)| name.strip_prefix(&format!("{n}__")).map(|t| (n.as_str(), t)))
+            .max_by_key(|(n, _)| n.len())
+    }
 }
 
 #[tool_router]
@@ -179,8 +188,7 @@ impl ServerHandler for Aggregator {
 
     async fn call_tool(&self, req: CallToolRequestParams, ctx: RequestContext<RoleServer>)
         -> Result<CallToolResponse, ErrorData> {
-        if let Some((server, tool)) = req.name.split_once("__")
-            && self.cfg.mcp_servers.get(server).is_some_and(|s| s.expose) {
+        if let Some((server, tool)) = self.route_exposed(&req.name) {
             let tool = tool.to_string();
             return self.ups.call(server, &tool, req.arguments).await
                 .map(CallToolResponse::from)

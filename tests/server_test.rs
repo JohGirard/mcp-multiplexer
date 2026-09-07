@@ -31,3 +31,23 @@ async fn meta_tools_flow() {
     let r = a.call_tool("mock".into(), "echo".into(), Some(args)).await.unwrap();
     assert_eq!(r.content[0].as_text().unwrap().text, "echo: yo");
 }
+
+#[tokio::test]
+async fn exposed_routing_longest_prefix() {
+    let bin = env!("CARGO_BIN_EXE_mcp-mock");
+    let text = format!(r#"{{"mcpServers":{{"a":{{"command":{bin:?},"expose":true}},"a__b":{{"command":{bin:?},"expose":true}}}}}}"#);
+    let cfg: Config = serde_json::from_str(&text).unwrap();
+    let ups = Arc::new(Upstreams::new(cfg.clone(), Cache::default(), 0));
+    let a = Aggregator::new(cfg, ups);
+
+    // server names may legally contain __; a__b__echo must route to server a__b (longest prefix), tool echo
+    let (server, tool) = a.route_exposed("a__b__echo").unwrap();
+    assert_eq!((server, tool), ("a__b", "echo"));
+    let mut args = serde_json::Map::new();
+    args.insert("message".into(), "hi".into());
+    let r = a.call_tool(server.into(), tool.into(), Some(args)).await.unwrap();
+    assert_eq!(r.content[0].as_text().unwrap().text, "echo: hi");
+
+    assert_eq!(a.route_exposed("a__echo"), Some(("a", "echo")));
+    assert_eq!(a.route_exposed("search_tools"), None);
+}
