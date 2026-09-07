@@ -74,11 +74,11 @@ impl Aggregator {
     pub async fn list_servers(&self) -> anyhow::Result<Vec<ServerSummary>> {
         let mut out = Vec::new();
         for name in self.ups.server_names() {
-            let tools = self.ups.tools(&name).await.unwrap_or_default();
             out.push(ServerSummary {
+                // in-memory index only: list_servers must never connect (lazy startup)
+                tool_count: self.ups.cached_tools(&name).len(),
                 status: self.ups.status(&name).to_string(),
                 instructions: self.ups.instructions(&name),
-                tool_count: tools.len(),
                 name,
             });
         }
@@ -95,14 +95,31 @@ impl Aggregator {
 
     pub async fn search_tools(&self, query: String, server: Option<String>, limit: usize)
         -> anyhow::Result<Vec<(String, ToolInfo)>> {
-        let mut index = Vec::new();
-        for name in self.ups.server_names() {
-            index.push((name.clone(), self.ups.tools(&name).await.unwrap_or_default()));
+        let names = match server.as_deref() {
+            Some(s) => {
+                if !self.ups.server_names().iter().any(|n| n == s) {
+                    anyhow::bail!("unknown server {s:?}; available: {}", self.ups.server_names().join(", "));
+                }
+                vec![s.to_string()]
+            }
+            None => self.ups.server_names(),
+        };
+        // fetch concurrently: a cold/hanging server must not serialize N x connect-timeout into a search
+        let mut set = tokio::task::JoinSet::new();
+        for name in names {
+            let ups = self.ups.clone();
+            set.spawn(async move { (name.clone(), ups.tools(&name).await.unwrap_or_default()) });
         }
+        let mut index = Vec::new();
+        while let Some(pair) = set.join_next().await { index.push(pair?); }
         Ok(search(&index, &query, server.as_deref(), limit))
     }
 
     pub async fn describe_tool(&self, server: String, tool: String) -> anyhow::Result<ToolInfo> {
+        if let Some(sc) = self.cfg.mcp_servers.get(&server)
+            && !sc.is_allowed(&tool) {
+            anyhow::bail!("tool {tool:?} on server {server:?} is blocked by config");
+        }
         self.ups.tools(&server).await?.into_iter().find(|t| t.name == tool)
             .ok_or_else(|| anyhow::anyhow!("unknown tool {tool:?} on server {server:?}"))
     }
@@ -139,7 +156,7 @@ impl Aggregator {
 
     #[tool(name = "search_tools", description = "Search tools across servers by name/description. Returns matches WITH full input schemas.")]
     async fn search_tools_tool(&self, Parameters(p): Parameters<SearchArgs>) -> Result<String, ErrorData> {
-        let v = self.search_tools(p.query, p.server, p.limit.unwrap_or(5)).await.map_err(internal)?;
+        let v = self.search_tools(p.query, p.server, p.limit.unwrap_or(5).min(25)).await.map_err(internal)?;
         serde_json::to_string_pretty(&v).map_err(internal)
     }
 
