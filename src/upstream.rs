@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, OnceCell};
+use tokio::sync::{Mutex, OnceCell, RwLock};
 use anyhow::{anyhow, bail};
 use rmcp::ServiceExt;
 use rmcp::model::CallToolResult;
@@ -10,7 +10,8 @@ use crate::model::ToolInfo;
 
 struct Entry {
     cfg: ServerConfig,
-    client: OnceCell<Arc<rmcp::service::RunningService<rmcp::service::RoleClient, ()>>>,
+    // RwLock so a dead mid-session client can be taken out; OnceCell keeps single-connect semantics
+    client: RwLock<OnceCell<Arc<rmcp::service::RunningService<rmcp::service::RoleClient, ()>>>>,
     failed: Mutex<Option<String>>,
     tools: Mutex<Vec<ToolInfo>>,
     instructions: Mutex<Option<String>>,
@@ -70,7 +71,7 @@ impl Upstreams {
             let instr = cache.instructions.get(name).cloned();
             (name.clone(), Arc::new(Entry {
                 cfg: sc.clone(),
-                client: OnceCell::new(),
+                client: RwLock::new(OnceCell::new()),
                 failed: Mutex::new(None),
                 tools: Mutex::new(tools),
                 instructions: Mutex::new(instr),
@@ -84,7 +85,7 @@ impl Upstreams {
     pub fn status(&self, name: &str) -> &'static str {
         match self.entries.get(name) {
             None => "unknown",
-            Some(e) if e.client.initialized() => "connected",
+            Some(e) if e.client.try_read().map(|c| c.initialized()).unwrap_or(false) => "connected",
             Some(e) => match e.failed.try_lock() {
                 Ok(g) if g.is_some() => "unavailable",
                 _ => "cold",
@@ -104,17 +105,19 @@ impl Upstreams {
 
     async fn ensure(&self, name: &str) -> anyhow::Result<Arc<rmcp::service::RunningService<rmcp::service::RoleClient, ()>>> {
         let e = self.entry(name)?;
-        let r = e.client.get_or_try_init(|| async {
+        let cell = e.client.read().await;
+        let r = cell.get_or_try_init(|| async {
             match connect(&e.cfg).await {
                 Ok(c) => { *e.failed.lock().await = None; Ok(Arc::new(c)) }
                 Err(err) => { *e.failed.lock().await = Some(err.to_string()); Err(err) }
             }
-        }).await?;
+        }).await?.clone();
+        drop(cell);
         // after first connect, refresh index from live server
         if e.tools.lock().await.is_empty() {
-            self.refresh_inner(name, r).await.ok();
+            self.refresh_inner(name, &r).await.ok();
         }
-        Ok(r.clone())
+        Ok(r)
     }
 
     pub async fn refresh(&self, name: &str) -> anyhow::Result<()> {
@@ -143,7 +146,16 @@ impl Upstreams {
             self.cache.lock().await.instructions.insert(name.to_string(), instr);
         }
         self.cache.lock().await.servers.insert(name.to_string(), out);
+        // persist right away — clients often SIGTERM us, so the shutdown save may never run
+        self.save_cache().await;
         Ok(())
+    }
+
+    /// In-memory index only, never connects. Empty for cold servers.
+    pub fn cached_tools(&self, name: &str) -> Vec<ToolInfo> {
+        self.entries.get(name)
+            .and_then(|e| e.tools.try_lock().ok().map(|g| g.clone()))
+            .unwrap_or_default()
     }
 
     pub async fn tools(&self, name: &str) -> anyhow::Result<Vec<ToolInfo>> {
@@ -157,16 +169,19 @@ impl Upstreams {
     pub async fn call(&self, name: &str, tool: &str,
         args: Option<serde_json::Map<String, serde_json::Value>>) -> anyhow::Result<CallToolResult> {
         let e = self.entry(name)?;
-        if e.cfg.is_denied(tool) { bail!("tool {tool:?} on server {name:?} is blocked by config"); }
+        if !e.cfg.is_allowed(tool) { bail!("tool {tool:?} on server {name:?} is blocked by config"); }
         let client = self.ensure(name).await?;
         let mut params = rmcp::model::CallToolRequestParams::new(tool.to_string());
         if let Some(a) = args { params = params.with_arguments(a); }
         match client.call_tool(params.clone()).await {
             Ok(r) => Ok(r),
             Err(err) => {
-                // ponytail: heuristic — any call error triggers one re-list+retry; cheap and covers stale index
-                tracing::debug!(%err, "call failed, refreshing index and retrying once");
-                self.refresh(name).await.ok();
+                // ponytail: heuristic — any call error drops the (possibly dead) client, then
+                // reconnects, re-lists and retries exactly once; covers dead upstreams and stale index
+                tracing::debug!(%err, "call failed, reconnecting and retrying once");
+                e.client.write().await.take();
+                let client = self.ensure(name).await?;
+                self.refresh_inner(name, &client).await.ok();
                 Ok(client.call_tool(params).await?)
             }
         }
