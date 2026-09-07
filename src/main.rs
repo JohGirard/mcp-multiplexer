@@ -38,7 +38,8 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     init_logging(args.verbose, args.log_file.as_deref());
     if args.dump_schema {
-        println!("{{\"placeholder\": true}}");
+        let schema = schemars::schema_for!(mcp_multiplexer::config::Config);
+        println!("{}", serde_json::to_string_pretty(&schema)?);
         return Ok(());
     }
     tracing::info!(config = %args.config.display(), "starting");
