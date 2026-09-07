@@ -8,7 +8,7 @@ pub fn search(
 ) -> Vec<(String, ToolInfo)> {
     let tokens: Vec<String> = query.split_whitespace().map(|s| s.to_lowercase()).collect();
     let mut scored: Vec<(u32, String, ToolInfo)> = index.iter()
-        .filter(|(name, _)| server.map_or(true, |s| s == name))
+        .filter(|(name, _)| server.is_none_or(|s| s == name))
         .flat_map(|(name, tools)| tools.iter().map(move |t| (name, t)))
         .filter_map(|(name, t)| {
             let n = t.name.to_lowercase();
@@ -21,7 +21,7 @@ pub fn search(
             (score > 0).then(|| (score, name.clone(), t.clone()))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|s| std::cmp::Reverse(s.0));
     scored.truncate(limit);
     scored.into_iter().map(|(_, n, t)| (n, t)).collect()
 }

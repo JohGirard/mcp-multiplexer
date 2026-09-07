@@ -43,5 +43,27 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     tracing::info!(config = %args.config.display(), "starting");
+    let text = std::fs::read_to_string(&args.config)
+        .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", args.config.display()))?;
+    let cfg: mcp_multiplexer::config::Config = serde_json::from_str(&text)?;
+    cfg.validate()?;
+    let hash = mcp_multiplexer::cache::config_hash(&text);
+    let cache = mcp_multiplexer::cache::Cache::load(hash);
+    let ups = std::sync::Arc::new(mcp_multiplexer::upstream::Upstreams::new(cfg.clone(), cache, hash));
+    for (name, sc) in &cfg.mcp_servers {
+        if sc.expose {
+            let ups = ups.clone();
+            let name = name.clone();
+            tokio::spawn(async move {
+                if let Err(e) = ups.tools(&name).await {
+                    tracing::warn!(server = %name, %e, "exposed server failed to connect");
+                }
+            });
+        }
+    }
+    let agg = mcp_multiplexer::server::Aggregator::new(cfg, ups.clone());
+    let svc = rmcp::serve_server(agg, rmcp::transport::stdio()).await?;
+    svc.waiting().await?;
+    ups.save_cache().await;
     Ok(())
 }
