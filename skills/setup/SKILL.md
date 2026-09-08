@@ -21,6 +21,7 @@ Otherwise install a prebuilt binary (no sudo):
 mkdir -p ~/.local/bin
 # pick the asset by `uname -s`/`uname -m`:
 #   Linux x86_64   mcp-multiplexer-x86_64-unknown-linux-musl.tar.gz
+#   Linux ARM64    mcp-multiplexer-aarch64-unknown-linux-musl.tar.gz
 #   macOS Intel    mcp-multiplexer-x86_64-apple-darwin.tar.gz
 #   macOS ARM      mcp-multiplexer-aarch64-apple-darwin.tar.gz
 #   Windows x86_64 mcp-multiplexer-x86_64-pc-windows-msvc.zip

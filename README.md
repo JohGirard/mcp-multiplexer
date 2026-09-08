@@ -32,8 +32,8 @@ connect lazily.
 
 ## Install
 
-**Prebuilt binary** (Linux x86_64, macOS Intel/ARM, Windows x86_64 — no Rust
-needed): grab the archive for your platform from
+**Prebuilt binary** (Linux x86_64/ARM64, macOS Intel/ARM, Windows x86_64 — no
+Rust needed): grab the archive for your platform from
 [Releases](https://github.com/johgirard/mcp-multiplexer/releases) and put
 `mcp-multiplexer` on your `PATH`.
 
