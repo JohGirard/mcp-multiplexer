@@ -1,0 +1,14 @@
+{
+  "name": "mcp-multiplexer",
+  "description": "One MCP server fronting many: 7 meta-tools instead of every tool schema in context. Setup skill installs the binary and migrates your existing MCP servers.",
+  "owner": {
+    "name": "Johannes Girard"
+  },
+  "plugins": [
+    {
+      "name": "mcp-multiplexer",
+      "source": "./",
+      "description": "One MCP server fronting many: 7 meta-tools instead of every tool schema in context. Includes the setup skill for install + migration."
+    }
+  ]
+}

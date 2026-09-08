@@ -1,0 +1,12 @@
+{
+  "name": "mcp-multiplexer",
+  "version": "0.1.0",
+  "description": "One MCP server fronting many — 7 meta-tools with lazy schema discovery. This plugin's setup skill installs the binary and migrates your existing MCP servers into it.",
+  "author": {
+    "name": "Johannes Girard"
+  },
+  "homepage": "https://github.com/JohGirard/mcp-multiplexer",
+  "repository": "https://github.com/JohGirard/mcp-multiplexer",
+  "license": "MIT",
+  "keywords": ["mcp", "mcp-server", "multiplexer", "proxy", "context-window"]
+}

@@ -131,6 +131,18 @@ Replace all your `mcpServers` entries with one pointing at the multiplexer:
 }
 ```
 
+**Plugin (does this for you):** this repo is a Claude Code plugin whose
+`setup` skill installs the binary, migrates your existing servers into a
+multiplexer config (secrets become `${VAR}` references, OAuth servers get
+flagged), rewires your client config, and verifies:
+
+```
+/plugin marketplace add JohGirard/mcp-multiplexer
+/plugin install mcp-multiplexer@mcp-multiplexer
+```
+
+Then ask Claude to "set up mcp-multiplexer" (or run `/mcp-multiplexer:setup`).
+
 ## When upstream tools change
 
 The index is built on first connect and cached on disk. If an upstream server
