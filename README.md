@@ -102,24 +102,19 @@ Run with `mcp-multiplexer --config /path/to/.mcp.json` (defaults to
 
 ## OAuth
 
-Remote servers that speak OAuth 2.1 (the MCP authorization spec) are handled
-with `"oauth": true` on a `url` server — no other setup needed in the common
-case:
+Remote servers that speak OAuth 2.1 (the MCP authorization spec) work with
+`"oauth": true` on a `url` server — no other setup in the common case:
 
-- First use fails with an error containing an authorization URL. Open it in a
-  browser and approve; a temporary `127.0.0.1` listener catches the redirect
-  and completes the exchange. Retry the call and it works. The model can also
-  drive this itself via the `authorize_server` meta-tool.
-- Tokens live in `~/.cache/mcp-multiplexer/tokens.json` (mode 0600). Refresh
-  is automatic and survives restarts — you authorize once per server.
-- **Headless** (SSH, Docker): open the URL anywhere, then call
-  `authorize_server` with `pasted_url` set to the final redirect URL
-  (`http://127.0.0.1:.../callback?code=...`) your browser tried to reach.
+- First use fails with an authorization URL. Open it, approve; a temporary
+  `127.0.0.1` listener completes the exchange. Retry the call and it works.
+  The model can also drive this itself via the `authorize_server` meta-tool.
+- Tokens live in `~/.cache/mcp-multiplexer/tokens.json` (mode 0600), refresh
+  automatically, and survive restarts — authorize once per server.
 
-Optional per-server tuning: `oauth_client_id` (skip dynamic registration with
-a pre-registered client), `oauth_scopes` (list), `oauth_redirect_port` (fixed
-callback port for providers that require an exact pre-registered redirect
-URI). Static `headers` and OAuth can coexist; the OAuth Bearer token wins.
+Scopes are auto-discovered; dynamic client registration is used when the
+provider supports it. Full guide — headless paste flow, `oauth_client_id` /
+`oauth_scopes` / `oauth_redirect_port` tuning, provider notes (GitLab's
+group toggle gotcha), troubleshooting: **[docs/oauth.md](docs/oauth.md)**.
 
 ## Claude Code
 
