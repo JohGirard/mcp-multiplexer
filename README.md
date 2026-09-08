@@ -32,11 +32,24 @@ connect lazily.
 
 ## Install
 
+**Prebuilt binary** (Linux x86_64, macOS Intel/ARM, Windows x86_64 — no Rust
+needed): grab the archive for your platform from
+[Releases](https://github.com/johgirard/mcp-multiplexer/releases) and put
+`mcp-multiplexer` on your `PATH`.
+
+```sh
+# example: Linux x86_64
+curl -L https://github.com/johgirard/mcp-multiplexer/releases/latest/download/mcp-multiplexer-x86_64-unknown-linux-musl.tar.gz | tar xz
+sudo install mcp-multiplexer /usr/local/bin/
+```
+
+**From source:**
+
 ```sh
 cargo install mcp-multiplexer
 ```
 
-This also installs `mcp-mock`, a tiny echo server used by the test suite —
+Either also installs `mcp-mock`, a tiny echo server used by the test suite —
 harmless, ignore it.
 
 ## Configuration
