@@ -1,0 +1,299 @@
+use crate::cache::cache_dir;
+use crate::config::ServerConfig;
+use anyhow::{anyhow, bail};
+use rmcp::transport::auth::{
+    AuthError, AuthorizationManager, AuthorizationRequest, CredentialStore, OAuthState,
+    StoredCredentials,
+};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// Per-server view over `tokens.json` in the cache dir. The whole file is
+/// rewritten on every save; `lock` (shared per process) serializes that.
+/// ponytail: single-process tool — no cross-process refresh coordination.
+#[derive(Clone)]
+pub struct TokenStore {
+    server: String,
+    path: PathBuf,
+    lock: Arc<Mutex<()>>,
+}
+
+impl TokenStore {
+    pub fn new(server: &str, lock: Arc<Mutex<()>>) -> TokenStore {
+        TokenStore {
+            server: server.into(),
+            path: cache_dir().join("tokens.json"),
+            lock,
+        }
+    }
+
+    pub async fn stored_client_id(&self) -> Option<String> {
+        CredentialStore::load(self)
+            .await
+            .ok()
+            .flatten()
+            .map(|c| c.client_id)
+    }
+
+    fn read_all(&self) -> BTreeMap<String, StoredCredentials> {
+        std::fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default()
+    }
+
+    fn write_all(&self, m: &BTreeMap<String, StoredCredentials>) -> Result<(), AuthError> {
+        let io = |e: std::io::Error| AuthError::InternalError(e.to_string());
+        if let Some(dir) = self.path.parent() {
+            std::fs::create_dir_all(dir).map_err(io)?;
+        }
+        let tmp = self.path.with_extension("json.tmp");
+        let json = serde_json::to_string(m).map_err(|e| AuthError::InternalError(e.to_string()))?;
+        std::fs::write(&tmp, json).map_err(io)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).map_err(io)?;
+        }
+        std::fs::rename(&tmp, &self.path).map_err(io)?;
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl CredentialStore for TokenStore {
+    async fn load(&self) -> Result<Option<StoredCredentials>, AuthError> {
+        let _g = self.lock.lock().await;
+        Ok(self.read_all().remove(&self.server))
+    }
+    async fn save(&self, credentials: StoredCredentials) -> Result<(), AuthError> {
+        let _g = self.lock.lock().await;
+        let mut all = self.read_all();
+        all.insert(self.server.clone(), credentials);
+        self.write_all(&all)
+    }
+    async fn clear(&self) -> Result<(), AuthError> {
+        let _g = self.lock.lock().await;
+        let mut all = self.read_all();
+        all.remove(&self.server);
+        self.write_all(&all)
+    }
+}
+
+/// OAuth state for one server: the rmcp state machine plus the pending
+/// callback-listener task of an in-flight authorization.
+pub struct OAuth {
+    state: Mutex<Option<OAuthState>>,
+    listener: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl OAuth {
+    pub fn new() -> Arc<OAuth> {
+        Arc::new(OAuth {
+            state: Mutex::new(None),
+            listener: Mutex::new(None),
+        })
+    }
+
+    async fn ensure_state(&self, cfg: &ServerConfig, store: &TokenStore) -> anyhow::Result<()> {
+        let mut g = self.state.lock().await;
+        if g.is_none() {
+            let url = cfg.url.as_deref().unwrap_or_default();
+            let mut m = AuthorizationManager::new(url)
+                .await
+                .map_err(|e| anyhow!("oauth init for {url}: {e}"))?;
+            m.set_credential_store(store.clone());
+            m.initialize_from_store()
+                .await
+                .map_err(|e| anyhow!("oauth credential init: {e}"))?;
+            *g = Some(OAuthState::Unauthorized(m));
+        }
+        Ok(())
+    }
+
+    /// Ok(Some) = valid token (refreshed + persisted by the manager if needed),
+    /// Ok(None) = user authorization required, Err = infrastructure failure.
+    pub async fn access_token(
+        &self,
+        cfg: &ServerConfig,
+        store: &TokenStore,
+    ) -> anyhow::Result<Option<String>> {
+        self.ensure_state(cfg, store).await?;
+        let g = self.state.lock().await;
+        match g.as_ref().unwrap().get_access_token().await {
+            Ok(t) => Ok(Some(t)),
+            Err(AuthError::AuthorizationRequired) => Ok(None),
+            Err(e) => Err(anyhow!("oauth token: {e}")),
+        }
+    }
+
+    /// Start (or re-report) the authorization flow; returns the URL to open.
+    /// The background task waits for the browser redirect on 127.0.0.1 and
+    /// completes the code exchange on its own.
+    pub async fn begin_flow(
+        self: &Arc<Self>,
+        cfg: &ServerConfig,
+        store: &TokenStore,
+    ) -> anyhow::Result<String> {
+        self.ensure_state(cfg, store).await?;
+        let mut g = self.state.lock().await;
+        let st = g.as_mut().unwrap();
+        if matches!(st, OAuthState::Session(_)) {
+            return st.get_authorization_url().await.map_err(|e| anyhow!("{e}"));
+        }
+        // bind first: the port is part of the redirect URI
+        let port = cfg.oauth_redirect_port.unwrap_or(0);
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+            .await
+            .map_err(|e| anyhow!("cannot bind oauth callback on 127.0.0.1:{port}: {e}"))?;
+        let port = listener.local_addr()?.port();
+        let mut req = AuthorizationRequest::new(format!("http://127.0.0.1:{port}/callback"))
+            .with_client_name("mcp-multiplexer");
+        if !cfg.oauth_scopes.is_empty() {
+            req = req.with_scopes(cfg.oauth_scopes.clone());
+        }
+        if let Some(cid) = match &cfg.oauth_client_id {
+            Some(c) => Some(c.clone()),
+            None => store.stored_client_id().await,
+        } {
+            req = req.with_preregistered_client(cid);
+        }
+        st.start_authorization(req)
+            .await
+            .map_err(|e| anyhow!("oauth: {e}"))?;
+        let url = st
+            .get_authorization_url()
+            .await
+            .map_err(|e| anyhow!("{e}"))?;
+        let me = self.clone();
+        let task = tokio::spawn(async move {
+            let Ok(callback_url) = wait_for_callback(listener).await else {
+                tracing::debug!("oauth callback listener closed without a redirect");
+                return;
+            };
+            let mut g = me.state.lock().await;
+            if let Some(st) = g.as_mut() {
+                match st.handle_callback_url(&callback_url).await {
+                    Ok(()) => tracing::info!("oauth authorization completed"),
+                    Err(e) => tracing::warn!(%e, "oauth callback exchange failed"),
+                }
+            }
+        });
+        *self.listener.lock().await = Some(task);
+        Ok(url)
+    }
+
+    /// Headless completion: the user pastes the final redirect URL here.
+    pub async fn complete_with_url(&self, pasted: &str) -> anyhow::Result<()> {
+        let mut g = self.state.lock().await;
+        let Some(st) = g.as_mut() else {
+            bail!("no authorization in progress — call authorize_server without pasted_url first");
+        };
+        if !matches!(st, OAuthState::Session(_)) {
+            bail!("no authorization in progress — call authorize_server without pasted_url first");
+        }
+        st.handle_callback_url(pasted)
+            .await
+            .map_err(|e| anyhow!("redirect URL rejected: {e} — if this persists, restart the flow via authorize_server"))
+    }
+}
+
+/// Extract the request path from an HTTP request line ("GET /cb?a=b HTTP/1.1").
+fn request_path(line: &str) -> Option<&str> {
+    let mut parts = line.split_whitespace();
+    match (parts.next(), parts.next()) {
+        (Some("GET"), Some(p)) => Some(p),
+        _ => None,
+    }
+}
+
+/// Wait (max 10 min) for the browser to hit the callback, answer with a
+/// "close this tab" page, and return the full redirect URL for parsing.
+async fn wait_for_callback(listener: tokio::net::TcpListener) -> anyhow::Result<String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (mut sock, _) =
+        tokio::time::timeout(std::time::Duration::from_secs(600), listener.accept())
+            .await
+            .map_err(|_| anyhow!("oauth callback timed out after 10 minutes"))??;
+    let mut buf = Vec::with_capacity(1024);
+    let mut chunk = [0u8; 1024];
+    let line = loop {
+        let n = sock.read(&mut chunk).await?;
+        if n == 0 {
+            bail!("connection closed before request");
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(end) = buf.windows(2).position(|w| w == b"\r\n") {
+            break String::from_utf8_lossy(&buf[..end]).into_owned();
+        }
+        if buf.len() > 8192 {
+            bail!("callback request too large");
+        }
+    };
+    let path = request_path(&line).ok_or_else(|| anyhow!("not a GET request: {line:?}"))?;
+    let body = "<html><body><h3>mcp-multiplexer</h3><p>Authorization complete - you can close this tab.</p></body></html>";
+    sock.write_all(
+        format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+            .as_bytes(),
+    )
+    .await?;
+    Ok(format!("http://127.0.0.1{path}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_request_line() {
+        assert_eq!(
+            request_path("GET /callback?code=abc&state=xyz HTTP/1.1"),
+            Some("/callback?code=abc&state=xyz")
+        );
+        assert_eq!(request_path("POST /callback HTTP/1.1"), None);
+        assert_eq!(request_path("garbage"), None);
+    }
+
+    #[tokio::test]
+    async fn token_store_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("mcpmux-oauth-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let lock = Arc::new(Mutex::new(()));
+        let a = TokenStore {
+            server: "a".into(),
+            path: dir.join("tokens.json"),
+            lock: lock.clone(),
+        };
+        let b = TokenStore {
+            server: "b".into(),
+            path: dir.join("tokens.json"),
+            lock,
+        };
+        let creds = StoredCredentials::new("cid".into(), None, vec!["s1".into()], None);
+        CredentialStore::save(&a, creds).await.unwrap();
+        let got = CredentialStore::load(&a).await.unwrap().unwrap();
+        assert_eq!(got.client_id, "cid");
+        assert_eq!(got.granted_scopes, vec!["s1"]);
+        assert!(
+            CredentialStore::load(&b).await.unwrap().is_none(),
+            "servers must not see each other's tokens"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(dir.join("tokens.json"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        CredentialStore::clear(&a).await.unwrap();
+        assert!(CredentialStore::load(&a).await.unwrap().is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

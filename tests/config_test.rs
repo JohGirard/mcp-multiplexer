@@ -66,3 +66,24 @@ fn no_allow_means_all_allowed_except_deny() {
     assert!(s.is_allowed("anything"));
     assert!(!s.is_allowed("nuke"));
 }
+
+#[test]
+fn oauth_requires_url() {
+    let c: Config =
+        serde_json::from_str(r#"{"mcpServers":{"bad":{"command":"x","oauth":true}}}"#).unwrap();
+    assert!(c.validate().unwrap_err().to_string().contains("oauth"));
+}
+
+#[test]
+fn oauth_options_require_oauth_flag() {
+    let c: Config = serde_json::from_str(
+        r#"{"mcpServers":{"bad":{"url":"https://x","oauth_client_id":"cid"}}}"#,
+    )
+    .unwrap();
+    assert!(c.validate().is_err());
+    let ok: Config = serde_json::from_str(
+        r#"{"mcpServers":{"ok":{"url":"https://x","oauth":true,"oauth_scopes":["read"]}}}"#,
+    )
+    .unwrap();
+    ok.validate().unwrap();
+}

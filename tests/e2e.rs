@@ -36,6 +36,7 @@ async fn end_to_end() {
         "describe_tool",
         "call_tool",
         "refresh_tools",
+        "authorize_server",
     ] {
         assert!(
             names.iter().any(|n| n == expected),

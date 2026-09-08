@@ -4,7 +4,7 @@
 [![crates.io](https://img.shields.io/crates/v/mcp-multiplexer.svg)](https://crates.io/crates/mcp-multiplexer)
 
 One MCP server fronting many. Point your AI client at the multiplexer and it
-presents **6 meta-tools** instead of every upstream server's full tool schemas —
+presents **7 meta-tools** instead of every upstream server's full tool schemas —
 slashing the tokens spent loading tool definitions into the model's context at
 session start.
 
@@ -23,6 +23,7 @@ based and remote HTTP upstreams) that exposes only:
 | `describe_tool(server, tool)` | One exact tool's full input schema |
 | `call_tool(server, tool, arguments)` | Proxied call; results returned verbatim |
 | `refresh_tools(server?)` | Reconnect and rebuild the tool index |
+| `authorize_server(server, pasted_url?)` | Start/complete OAuth login for a server |
 
 The model discovers tools lazily — list and search first, fetch a full schema
 only when it's about to call. The tool index is cached at
@@ -71,6 +72,10 @@ environment expansion (same as Claude Code). An unset variable or unclosed
       "headers": { "Authorization": "Bearer ${API_TOKEN}" },
       "deny": ["admin_*"]
     },
+    "linear": {
+      "url": "https://mcp.linear.app/mcp",
+      "oauth": true
+    },
     "fast": {
       "command": "mcp-fast-server",
       "expose": true
@@ -81,6 +86,27 @@ environment expansion (same as Claude Code). An unset variable or unclosed
 
 Run with `mcp-multiplexer --config /path/to/.mcp.json` (defaults to
 `./.mcp.json`).
+
+## OAuth
+
+Remote servers that speak OAuth 2.1 (the MCP authorization spec) are handled
+with `"oauth": true` on a `url` server — no other setup needed in the common
+case:
+
+- First use fails with an error containing an authorization URL. Open it in a
+  browser and approve; a temporary `127.0.0.1` listener catches the redirect
+  and completes the exchange. Retry the call and it works. The model can also
+  drive this itself via the `authorize_server` meta-tool.
+- Tokens live in `~/.cache/mcp-multiplexer/tokens.json` (mode 0600). Refresh
+  is automatic and survives restarts — you authorize once per server.
+- **Headless** (SSH, Docker): open the URL anywhere, then call
+  `authorize_server` with `pasted_url` set to the final redirect URL
+  (`http://127.0.0.1:.../callback?code=...`) your browser tried to reach.
+
+Optional per-server tuning: `oauth_client_id` (skip dynamic registration with
+a pre-registered client), `oauth_scopes` (list), `oauth_redirect_port` (fixed
+callback port for providers that require an exact pre-registered redirect
+URI). Static `headers` and OAuth can coexist; the OAuth Bearer token wins.
 
 ## Claude Code
 
@@ -126,7 +152,7 @@ runtimes (node, uv, …) inside the image.
 - MCP resources and prompts (tools only).
 - Upstream sampling, elicitation, and roots.
 - No truncation of tool results — returned verbatim.
-- No auth flows for remote servers (static headers only).
+- OAuth for `url` servers only (stdio servers use `env` for secrets).
 - No `tools/list_changed` notification forwarding — use `refresh_tools`.
 
 ## Development

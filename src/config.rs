@@ -49,6 +49,15 @@ pub struct ServerConfig {
     pub allow: Option<Vec<String>>,
     /// Always hidden/blocked; wins over allow
     pub deny: Vec<String>,
+    /// Enable OAuth 2.0 (PKCE) for this server — url servers only
+    pub oauth: bool,
+    /// Pre-registered OAuth client ID; dynamic registration is used when unset
+    pub oauth_client_id: Option<String>,
+    /// Scopes to request; server defaults when empty
+    pub oauth_scopes: Vec<String>,
+    /// Fixed port for the 127.0.0.1 callback listener, for providers that
+    /// require an exact pre-registered redirect URI. Default: ephemeral port
+    pub oauth_redirect_port: Option<u16>,
 }
 
 pub fn glob_match(pat: &str, name: &str) -> bool {
@@ -142,6 +151,21 @@ impl Config {
                     anyhow::bail!("server {name:?}: has both \"command\" and \"url\", pick one")
                 }
                 _ => {}
+            }
+            if s.command.is_some()
+                && (s.oauth
+                    || s.oauth_client_id.is_some()
+                    || !s.oauth_scopes.is_empty()
+                    || s.oauth_redirect_port.is_some())
+            {
+                anyhow::bail!("server {name:?}: oauth options require \"url\", not \"command\"");
+            }
+            if !s.oauth
+                && (s.oauth_client_id.is_some()
+                    || !s.oauth_scopes.is_empty()
+                    || s.oauth_redirect_port.is_some())
+            {
+                anyhow::bail!("server {name:?}: oauth_* options require \"oauth\": true");
             }
         }
         Ok(())

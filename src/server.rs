@@ -70,6 +70,13 @@ pub struct CallArgs {
     pub arguments: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
+#[derive(serde::Deserialize, JsonSchema)]
+pub struct AuthorizeArgs {
+    pub server: String,
+    /// Headless completion: the final redirect URL (http://127.0.0.1:.../callback?code=...)
+    pub pasted_url: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct Aggregator {
     cfg: Config,
@@ -222,6 +229,31 @@ impl Aggregator {
             .map_err(internal)
     }
 
+    pub async fn authorize_server(
+        &self,
+        server: String,
+        pasted_url: Option<String>,
+    ) -> anyhow::Result<String> {
+        match pasted_url {
+            Some(u) => {
+                self.ups.oauth_complete(&server, &u).await?;
+                self.ups.refresh(&server).await?;
+                Ok(format!("authorized; tool index refreshed for {server}"))
+            }
+            None => match self.ups.oauth_begin(&server).await? {
+                None => Ok(format!("{server} is already authorized")),
+                Some(url) => Ok(format!(
+                    "Authorization required for {server}.\n\
+                     1. Open in a browser: {url}\n\
+                     2. Approve access — the redirect completes automatically.\n\
+                     3. Retry your call.\n\
+                     Headless? Open the URL anywhere, then call authorize_server again \
+                     with pasted_url set to the final redirect URL."
+                )),
+            },
+        }
+    }
+
     /// Split a `server__tool` name into (server, tool) by longest matching
     /// expose-server prefix — server names may themselves contain `__`.
     pub fn route_exposed<'n>(&self, name: &'n str) -> Option<(&str, &'n str)> {
@@ -312,13 +344,26 @@ impl Aggregator {
     ) -> Result<CallToolResult, ErrorData> {
         self.call_tool(p.server, p.tool, p.arguments).await
     }
+
+    #[tool(
+        name = "authorize_server",
+        description = "OAuth-authorize a server. Without pasted_url: returns the authorization URL or 'already authorized'. With pasted_url: completes a headless flow from the final redirect URL."
+    )]
+    async fn authorize_server_tool(
+        &self,
+        Parameters(p): Parameters<AuthorizeArgs>,
+    ) -> Result<String, ErrorData> {
+        self.authorize_server(p.server, p.pasted_url)
+            .await
+            .map_err(internal)
+    }
 }
 
 #[tool_handler]
 impl ServerHandler for Aggregator {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_instructions("Multiplexed MCP servers. Use list_servers → list_tools/search_tools → describe_tool → call_tool. refresh_tools re-indexes after upstream tool changes. Tools named server__tool are directly exposed.")
+            .with_instructions("Multiplexed MCP servers. Use list_servers → list_tools/search_tools → describe_tool → call_tool. refresh_tools re-indexes after upstream tool changes. authorize_server handles OAuth login. Tools named server__tool are directly exposed.")
     }
 
     async fn list_tools(

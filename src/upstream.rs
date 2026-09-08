@@ -1,6 +1,7 @@
 use crate::cache::Cache;
 use crate::config::{Config, ServerConfig};
 use crate::model::ToolInfo;
+use crate::oauth::{OAuth, TokenStore};
 use anyhow::{anyhow, bail};
 use rmcp::ServiceExt;
 use rmcp::model::CallToolResult;
@@ -15,6 +16,8 @@ struct Entry {
     failed: Mutex<Option<String>>,
     tools: Mutex<Vec<ToolInfo>>,
     instructions: Mutex<Option<String>>,
+    oauth: Option<Arc<OAuth>>,
+    token_store: Option<TokenStore>,
 }
 
 pub struct Upstreams {
@@ -26,8 +29,9 @@ pub struct Upstreams {
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 async fn connect(
-    cfg: &ServerConfig,
+    e: &Entry,
 ) -> anyhow::Result<rmcp::service::RunningService<rmcp::service::RoleClient, ()>> {
+    let cfg = &e.cfg;
     let fut = async {
         if let Some(cmd) = &cfg.command {
             let mut c = tokio::process::Command::new(cmd);
@@ -53,6 +57,23 @@ async fn connect(
                     http::HeaderValue::from_str(v)?,
                 );
             }
+            if let Some(oauth) = &e.oauth {
+                let store = e.token_store.as_ref().unwrap();
+                match oauth.access_token(cfg, store).await? {
+                    Some(token) => {
+                        config.custom_headers.insert(
+                            http::header::AUTHORIZATION,
+                            http::HeaderValue::from_str(&format!("Bearer {token}"))?,
+                        );
+                    }
+                    None => {
+                        let auth_url = oauth.begin_flow(cfg, store).await?;
+                        bail!(
+                            "server requires OAuth authorization. Open in a browser: {auth_url} — then retry. Headless? Call authorize_server with the final redirect URL as pasted_url."
+                        );
+                    }
+                }
+            }
             let transport = rmcp::transport::StreamableHttpClientTransport::from_config(config);
             Ok(().serve(transport).await?)
         } else {
@@ -70,6 +91,7 @@ async fn connect(
 
 impl Upstreams {
     pub fn new(cfg: Config, cache: Cache, config_hash: u64) -> Upstreams {
+        let token_lock = Arc::new(Mutex::new(()));
         let entries = cfg
             .mcp_servers
             .iter()
@@ -84,6 +106,8 @@ impl Upstreams {
                         failed: Mutex::new(None),
                         tools: Mutex::new(tools),
                         instructions: Mutex::new(instr),
+                        oauth: sc.oauth.then(OAuth::new),
+                        token_store: sc.oauth.then(|| TokenStore::new(name, token_lock.clone())),
                     }),
                 )
             })
@@ -143,7 +167,7 @@ impl Upstreams {
         let cell = e.client.read().await;
         let r = cell
             .get_or_try_init(|| async {
-                match connect(&e.cfg).await {
+                match connect(e).await {
                     Ok(c) => {
                         *e.failed.lock().await = None;
                         Ok(Arc::new(c))
@@ -254,6 +278,28 @@ impl Upstreams {
                 Ok(client.call_tool(params).await?)
             }
         }
+    }
+
+    /// Begin (or re-report) OAuth authorization for a server.
+    /// Ok(None) = already authorized, Ok(Some) = URL the user must open.
+    pub async fn oauth_begin(&self, name: &str) -> anyhow::Result<Option<String>> {
+        let e = self.entry(name)?;
+        let (Some(oauth), Some(store)) = (&e.oauth, &e.token_store) else {
+            bail!("server {name:?} does not have \"oauth\": true in the config");
+        };
+        match oauth.access_token(&e.cfg, store).await? {
+            Some(_) => Ok(None),
+            None => Ok(Some(oauth.begin_flow(&e.cfg, store).await?)),
+        }
+    }
+
+    /// Complete a headless OAuth flow from the pasted redirect URL.
+    pub async fn oauth_complete(&self, name: &str, pasted: &str) -> anyhow::Result<()> {
+        let e = self.entry(name)?;
+        let Some(oauth) = &e.oauth else {
+            bail!("server {name:?} does not have \"oauth\": true in the config");
+        };
+        oauth.complete_with_url(pasted).await
     }
 
     pub async fn save_cache(&self) {

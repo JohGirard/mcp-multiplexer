@@ -69,6 +69,38 @@
           },
           "default": {}
         },
+        "oauth": {
+          "description": "Enable OAuth 2.0 (PKCE) for this server — url servers only",
+          "type": "boolean",
+          "default": false
+        },
+        "oauth_client_id": {
+          "description": "Pre-registered OAuth client ID; dynamic registration is used when unset",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "oauth_redirect_port": {
+          "description": "Fixed port for the 127.0.0.1 callback listener, for providers that\nrequire an exact pre-registered redirect URI. Default: ephemeral port",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "default": null,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "oauth_scopes": {
+          "description": "Scopes to request; server defaults when empty",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
         "url": {
           "type": [
             "string",

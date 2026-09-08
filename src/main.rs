@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[command(
     name = "mcp-multiplexer",
     version,
-    about = "One MCP server fronting many, with 6 meta-tools"
+    about = "One MCP server fronting many, with 7 meta-tools"
 )]
 struct Args {
     /// Path to config file (standard mcpServers format)
