@@ -1,7 +1,7 @@
+use schemars::JsonSchema;
+use serde::{Deserialize, Deserializer};
 use std::collections::BTreeMap;
 use std::path::Path;
-use serde::{Deserialize, Deserializer};
-use schemars::JsonSchema;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct Config {
@@ -10,7 +10,9 @@ pub struct Config {
 }
 
 fn no_dup_keys<'de, D>(d: D) -> Result<BTreeMap<String, ServerConfig>, D::Error>
-where D: Deserializer<'de> {
+where
+    D: Deserializer<'de>,
+{
     use serde::de::{MapAccess, Visitor};
     struct V;
     impl<'de> Visitor<'de> for V {
@@ -22,7 +24,9 @@ where D: Deserializer<'de> {
             let mut out = BTreeMap::new();
             while let Some((k, v)) = map.next_entry::<String, ServerConfig>()? {
                 if out.insert(k.clone(), v).is_some() {
-                    return Err(serde::de::Error::custom(format!("duplicate server name: {k}")));
+                    return Err(serde::de::Error::custom(format!(
+                        "duplicate server name: {k}"
+                    )));
                 }
             }
             Ok(out)
@@ -59,7 +63,9 @@ impl ServerConfig {
         self.deny.iter().any(|p| glob_match(p, tool))
     }
     pub fn is_allowed(&self, tool: &str) -> bool {
-        if self.is_denied(tool) { return false; }
+        if self.is_denied(tool) {
+            return false;
+        }
         match &self.allow {
             Some(pats) => pats.iter().any(|p| glob_match(p, tool)),
             None => true,
@@ -67,24 +73,97 @@ impl ServerConfig {
     }
 }
 
+/// `${VAR}` expansion using `get` for lookups. Unclosed `${` or an unset
+/// variable is an error — fail at startup, not with a broken upstream later.
+fn expand(s: &str, get: impl Fn(&str) -> Option<String>) -> anyhow::Result<String> {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find("${") {
+        let Some(j) = rest[i + 2..].find('}') else {
+            anyhow::bail!("unclosed \"${{\" in {s:?}")
+        };
+        let var = &rest[i + 2..i + 2 + j];
+        let val = get(var)
+            .ok_or_else(|| anyhow::anyhow!("env var {var:?} referenced in config is not set"))?;
+        out.push_str(&rest[..i]);
+        out.push_str(&val);
+        rest = &rest[i + 2 + j + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 impl Config {
-    pub fn load(path: &Path) -> anyhow::Result<Config> {
+    /// Returns the parsed config and the raw file text (for cache hashing).
+    pub fn load(path: &Path) -> anyhow::Result<(Config, String)> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
-        let cfg: Config = serde_json::from_str(&text)
+        let mut cfg: Config = serde_json::from_str(&text)
             .map_err(|e| anyhow::anyhow!("invalid config {}: {e}", path.display()))?;
+        cfg.expand_env()?;
         cfg.validate()?;
-        Ok(cfg)
+        Ok((cfg, text))
+    }
+
+    /// Expand ${VAR} in command/args/env/url/headers of every server.
+    fn expand_env(&mut self) -> anyhow::Result<()> {
+        for (name, s) in &mut self.mcp_servers {
+            let r = (|| {
+                let get = |v: &str| std::env::var(v).ok();
+                if let Some(c) = &mut s.command {
+                    *c = expand(c, get)?;
+                }
+                for a in &mut s.args {
+                    *a = expand(a, get)?;
+                }
+                for v in s.env.values_mut() {
+                    *v = expand(v, get)?;
+                }
+                if let Some(u) = &mut s.url {
+                    *u = expand(u, get)?;
+                }
+                for v in s.headers.values_mut() {
+                    *v = expand(v, get)?;
+                }
+                Ok(())
+            })();
+            r.map_err(|e: anyhow::Error| anyhow::anyhow!("server {name:?}: {e}"))?;
+        }
+        Ok(())
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
         for (name, s) in &self.mcp_servers {
             match (&s.command, &s.url) {
-                (None, None) => anyhow::bail!("server {name:?}: needs either \"command\" or \"url\""),
-                (Some(_), Some(_)) => anyhow::bail!("server {name:?}: has both \"command\" and \"url\", pick one"),
+                (None, None) => {
+                    anyhow::bail!("server {name:?}: needs either \"command\" or \"url\"")
+                }
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("server {name:?}: has both \"command\" and \"url\", pick one")
+                }
                 _ => {}
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expands_vars() {
+        let get = |v: &str| (v == "A").then(|| "x".to_string());
+        assert_eq!(expand("a-${A}-b", get).unwrap(), "a-x-b");
+        assert_eq!(expand("plain", get).unwrap(), "plain");
+        assert_eq!(expand("${A}${A}", get).unwrap(), "xx");
+        assert!(
+            expand("${MISSING}", get)
+                .unwrap_err()
+                .to_string()
+                .contains("MISSING")
+        );
+        assert!(expand("${unclosed", get).is_err());
     }
 }

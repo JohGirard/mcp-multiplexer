@@ -1,8 +1,12 @@
-use std::path::PathBuf;
 use clap::Parser;
+use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "mcp-multiplexer", version, about = "One MCP server fronting many, with 5 meta-tools")]
+#[command(
+    name = "mcp-multiplexer",
+    version,
+    about = "One MCP server fronting many, with 6 meta-tools"
+)]
 struct Args {
     /// Path to config file (standard mcpServers format)
     #[arg(long, default_value = "./.mcp.json")]
@@ -19,15 +23,21 @@ struct Args {
 }
 
 fn init_logging(verbose: bool, log_file: Option<&std::path::Path>) {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(if verbose { "debug" } else { "info" }));
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new(if verbose { "debug" } else { "info" })
+    });
     let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr);
     if let Some(path) = log_file {
-        let file = std::fs::OpenOptions::new().create(true).append(true).open(path)
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
             .unwrap_or_else(|e| panic!("cannot open log file {}: {e}", path.display()));
-        builder.with_writer(move || file.try_clone().expect("log file clone")).init();
+        builder
+            .with_writer(move || file.try_clone().expect("log file clone"))
+            .init();
     } else {
         builder.init();
     }
@@ -43,13 +53,14 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     tracing::info!(config = %args.config.display(), "starting");
-    let text = std::fs::read_to_string(&args.config)
-        .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", args.config.display()))?;
-    let cfg: mcp_multiplexer::config::Config = serde_json::from_str(&text)?;
-    cfg.validate()?;
+    let (cfg, text) = mcp_multiplexer::config::Config::load(&args.config)?;
     let hash = mcp_multiplexer::cache::config_hash(&text);
     let cache = mcp_multiplexer::cache::Cache::load(hash);
-    let ups = std::sync::Arc::new(mcp_multiplexer::upstream::Upstreams::new(cfg.clone(), cache, hash));
+    let ups = std::sync::Arc::new(mcp_multiplexer::upstream::Upstreams::new(
+        cfg.clone(),
+        cache,
+        hash,
+    ));
     for (name, sc) in &cfg.mcp_servers {
         if sc.expose {
             let ups = ups.clone();
