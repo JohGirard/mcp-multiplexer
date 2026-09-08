@@ -113,4 +113,4 @@ used by the integration tests.
 
 ## License
 
-MIT OR Apache-2.0.
+MIT. Free for any use, including commercial — the only requirement is keeping the copyright notice.
