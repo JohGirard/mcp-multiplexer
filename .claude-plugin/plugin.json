@@ -1,6 +1,6 @@
 {
   "name": "mcp-multiplexer",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "One MCP server fronting many — 7 meta-tools with lazy schema discovery. This plugin's setup skill installs the binary and migrates your existing MCP servers into it.",
   "author": {
     "name": "Johannes Girard"

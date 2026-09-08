@@ -1,6 +1,6 @@
 [package]
 name = "mcp-multiplexer"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "One MCP server fronting many: 7 meta-tools instead of every tool schema in context"
 license = "MIT"
