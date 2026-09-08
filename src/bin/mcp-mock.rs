@@ -1,26 +1,44 @@
-use rmcp::{ServerHandler, ServiceExt, tool, tool_router};
 use rmcp::model::*;
+use rmcp::{ServerHandler, ServiceExt, tool, tool_router};
 
 #[derive(Clone)]
 struct Mock;
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
-struct EchoParams { message: String }
+struct EchoParams {
+    message: String,
+}
 #[derive(serde::Deserialize, schemars::JsonSchema)]
-struct AddParams { left: usize, right: usize }
+struct AddParams {
+    left: usize,
+    right: usize,
+}
 
 #[tool_router]
 impl Mock {
     #[tool(description = "Echo back the message")]
-    async fn echo(&self, rmcp::handler::server::wrapper::Parameters(p): rmcp::handler::server::wrapper::Parameters<EchoParams>)
-        -> Result<CallToolResult, ErrorData> {
+    async fn echo(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(p): rmcp::handler::server::wrapper::Parameters<
+            EchoParams,
+        >,
+    ) -> Result<CallToolResult, ErrorData> {
         die_after_call();
-        Ok(CallToolResult::success(vec![ContentBlock::text(format!("echo: {}", p.message))]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
+            "echo: {}",
+            p.message
+        ))]))
     }
     #[tool(description = "Add two numbers")]
-    async fn add(&self, rmcp::handler::server::wrapper::Parameters(p): rmcp::handler::server::wrapper::Parameters<AddParams>)
-        -> Result<CallToolResult, ErrorData> {
-        Ok(CallToolResult::success(vec![ContentBlock::text((p.left + p.right).to_string())]))
+    async fn add(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(p): rmcp::handler::server::wrapper::Parameters<
+            AddParams,
+        >,
+    ) -> Result<CallToolResult, ErrorData> {
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            (p.left + p.right).to_string(),
+        )]))
     }
     #[tool(description = "Always fails")]
     async fn fail(&self) -> Result<CallToolResult, ErrorData> {

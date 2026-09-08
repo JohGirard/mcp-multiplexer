@@ -7,17 +7,21 @@ pub fn search(
     limit: usize,
 ) -> Vec<(String, ToolInfo)> {
     let tokens: Vec<String> = query.split_whitespace().map(|s| s.to_lowercase()).collect();
-    let mut scored: Vec<(u32, String, ToolInfo)> = index.iter()
+    let mut scored: Vec<(u32, String, ToolInfo)> = index
+        .iter()
         .filter(|(name, _)| server.is_none_or(|s| s == name))
         .flat_map(|(name, tools)| tools.iter().map(move |t| (name, t)))
         .filter_map(|(name, t)| {
             let n = t.name.to_lowercase();
             let d = t.description.clone().unwrap_or_default().to_lowercase();
             // ponytail: naive substring scoring — swap for a real fuzzy matcher if ranking disappoints
-            let score: u32 = tokens.iter().map(|tok| {
-                (if n.contains(tok.as_str()) { 2 } else { 0 })
-              + (if d.contains(tok.as_str()) { 1 } else { 0 })
-            }).sum();
+            let score: u32 = tokens
+                .iter()
+                .map(|tok| {
+                    (if n.contains(tok.as_str()) { 2 } else { 0 })
+                        + (if d.contains(tok.as_str()) { 1 } else { 0 })
+                })
+                .sum();
             (score > 0).then(|| (score, name.clone(), t.clone()))
         })
         .collect();

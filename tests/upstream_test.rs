@@ -12,9 +12,15 @@ async fn lazy_connect_and_call() {
     assert_eq!(ups.status("mock"), "cold");
     let tools = ups.tools("mock").await.unwrap();
     let names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
-    assert!(names.contains(&"echo") && names.contains(&"add"), "{names:?}");
+    assert!(
+        names.contains(&"echo") && names.contains(&"add"),
+        "{names:?}"
+    );
     assert_eq!(ups.status("mock"), "connected");
-    assert_eq!(ups.instructions("mock").as_deref(), Some("mock upstream for tests"));
+    assert_eq!(
+        ups.instructions("mock").as_deref(),
+        Some("mock upstream for tests")
+    );
 
     let mut args = serde_json::Map::new();
     args.insert("message".into(), "hi".into());
@@ -26,7 +32,11 @@ async fn lazy_connect_and_call() {
 #[tokio::test]
 async fn unknown_tool_rerefreshes_and_errors() {
     let ups = Upstreams::new(test_config(), Cache::default(), 0);
-    let err = ups.call("mock", "nonexistent", None).await.unwrap_err().to_string();
+    let err = ups
+        .call("mock", "nonexistent", None)
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(!err.is_empty());
     // after the failed call the index must be populated (re-list happened)
     assert_eq!(ups.status("mock"), "connected");
@@ -38,10 +48,20 @@ async fn denied_tool_blocked() {
     let text = format!(r#"{{"mcpServers":{{"mock":{{"command":{bin:?},"deny":["echo"]}}}}}}"#);
     let cfg: Config = serde_json::from_str(&text).unwrap();
     let ups = Upstreams::new(cfg, Cache::default(), 0);
-    let err = ups.call("mock", "echo", None).await.unwrap_err().to_string();
+    let err = ups
+        .call("mock", "echo", None)
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("blocked by config"), "{err}");
     // and it is filtered from the index
-    let names: Vec<_> = ups.tools("mock").await.unwrap().iter().map(|t| t.name.clone()).collect();
+    let names: Vec<_> = ups
+        .tools("mock")
+        .await
+        .unwrap()
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
     assert!(!names.contains(&"echo".to_string()));
 }
 
@@ -52,9 +72,19 @@ async fn allow_filtered_tool_blocked() {
     let cfg: Config = serde_json::from_str(&text).unwrap();
     let ups = Upstreams::new(cfg, Cache::default(), 0);
     // echo is not in the allow list: hidden from the index AND refused on the call path
-    let err = ups.call("mock", "echo", None).await.unwrap_err().to_string();
+    let err = ups
+        .call("mock", "echo", None)
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("blocked by config"), "{err}");
-    let names: Vec<_> = ups.tools("mock").await.unwrap().iter().map(|t| t.name.clone()).collect();
+    let names: Vec<_> = ups
+        .tools("mock")
+        .await
+        .unwrap()
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
     assert!(!names.contains(&"echo".to_string()));
 }
 
@@ -62,7 +92,9 @@ async fn allow_filtered_tool_blocked() {
 async fn dead_upstream_reconnects_and_retries() {
     // mock self-terminates ~50ms after answering each echo call (MOCK_DIE_AFTER_CALL)
     let bin = env!("CARGO_BIN_EXE_mcp-mock");
-    let text = format!(r#"{{"mcpServers":{{"mock":{{"command":{bin:?},"env":{{"MOCK_DIE_AFTER_CALL":"1"}}}}}}}}"#);
+    let text = format!(
+        r#"{{"mcpServers":{{"mock":{{"command":{bin:?},"env":{{"MOCK_DIE_AFTER_CALL":"1"}}}}}}}}"#
+    );
     let cfg: Config = serde_json::from_str(&text).unwrap();
     let ups = Upstreams::new(cfg, Cache::default(), 0);
 

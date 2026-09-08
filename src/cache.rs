@@ -1,9 +1,9 @@
+pub use crate::model::ToolInfo;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
-pub use crate::model::ToolInfo;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct CacheFile {
@@ -34,18 +34,33 @@ pub fn cache_path() -> PathBuf {
 }
 
 impl Cache {
-    pub fn load(config_hash: u64) -> Cache { Self::load_from(&cache_path(), config_hash) }
-    pub fn save(&self, config_hash: u64) -> anyhow::Result<()> { self.save_to(&cache_path(), config_hash) }
+    pub fn load(config_hash: u64) -> Cache {
+        Self::load_from(&cache_path(), config_hash)
+    }
+    pub fn save(&self, config_hash: u64) -> anyhow::Result<()> {
+        self.save_to(&cache_path(), config_hash)
+    }
 
     pub fn load_from(path: &Path, config_hash: u64) -> Cache {
-        let Ok(text) = std::fs::read_to_string(path) else { return Cache::default() };
-        let Ok(f) = serde_json::from_str::<CacheFile>(&text) else { return Cache::default() };
-        if f.config_hash != config_hash { return Cache::default() }
-        Cache { servers: f.servers, instructions: f.instructions }
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Cache::default();
+        };
+        let Ok(f) = serde_json::from_str::<CacheFile>(&text) else {
+            return Cache::default();
+        };
+        if f.config_hash != config_hash {
+            return Cache::default();
+        }
+        Cache {
+            servers: f.servers,
+            instructions: f.instructions,
+        }
     }
 
     pub fn save_to(&self, path: &Path, config_hash: u64) -> anyhow::Result<()> {
-        if let Some(dir) = path.parent() { std::fs::create_dir_all(dir)?; }
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
         let f = CacheFile {
             config_hash,
             servers: self.servers.clone(),
