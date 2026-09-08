@@ -99,6 +99,7 @@ registration, scope discovery, refresh all work.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `Auth required, when send initialize request` | server needs OAuth but `oauth` isn't set — common when migrating from a client (e.g. Claude Code) that had its own cached OAuth tokens | set `"oauth": true` and authorize |
 | `HTTP 404` after authorizing (GitLab) | MCP not enabled on any top-level group | see Provider notes above |
 | `invalid URL, scheme is not http` | build without TLS (bug in v0.1.0) | upgrade to ≥ v0.1.1 |
 | Provider rejects the redirect URI | pre-registered app requires an exact URI | set `oauth_redirect_port` and register `http://127.0.0.1:<port>/callback` |

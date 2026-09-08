@@ -116,6 +116,19 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 Expect a JSON response with `"serverInfo"`. If it errors, the message names
 the problem (unset `${VAR}`, bad JSON, unknown key) — fix and re-run.
 
+Then check each migrated url server actually connects — for every one, run a
+`list_tools` through the mux (the same stdin pattern with a `tools/call`).
+Two failure shapes have known fixes:
+
+- `Auth required, when send initialize request` → the server needs OAuth and
+  you didn't set it (clients like Claude Code hide this — they cache their
+  own OAuth tokens). Set `"oauth": true` and re-check.
+- `Dynamic client registration not supported` → the provider needs a
+  pre-registered OAuth client. Get a client ID from the provider's admin,
+  then set `oauth_client_id` (and `oauth_redirect_port` + registering
+  `http://127.0.0.1:<port>/callback` if it requires exact redirect URIs —
+  Okta-backed providers usually do).
+
 Then tell the user:
 
 1. **Restart Claude Code** (or run `/mcp` to reconnect) so the `mux` server
