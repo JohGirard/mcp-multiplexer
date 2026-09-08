@@ -170,6 +170,9 @@ runtimes (node, uv, …) inside the image.
 
 ## Development
 
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and
+the CI checklist, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+
 `src/bin/mcp-mock.rs` builds an `mcp-mock` dev binary (echo/add/fail tools)
 used by the integration tests.
 
