@@ -164,6 +164,14 @@ used by the integration tests.
 cargo test
 ```
 
+Debug interactively with the MCP Inspector — note the `--`, which keeps the
+inspector's own `--config` flag from eating ours:
+
+```sh
+npx @modelcontextprotocol/inspector --web -- \
+  mcp-multiplexer --config /path/to/.mcp.json
+```
+
 Releases are tagged `v*`; CI runs tests/clippy/fmt on push and publishes to
 crates.io and ghcr.io on tags.
 
