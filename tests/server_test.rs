@@ -2,6 +2,18 @@ use mcp_multiplexer::{cache::Cache, config::Config, server::Aggregator, upstream
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Same cache isolation as upstream_test.rs — refresh() saves to the cache
+/// dir internally, keep it off the user's real ~/.cache.
+fn isolate_cache() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("mcpmux-test-cache-{}", std::process::id()));
+        // SAFETY: every test fn in this process calls isolate_cache() before
+        // touching the cache, so the Once write precedes any cache_dir() read.
+        unsafe { std::env::set_var("XDG_CACHE_HOME", &dir) };
+    });
+}
+
 async fn agg(expose: bool) -> Aggregator {
     let bin = env!("CARGO_BIN_EXE_mcp-mock");
     let text = format!(r#"{{"mcpServers":{{"mock":{{"command":{bin:?},"expose":{expose}}}}}}}"#);
@@ -12,6 +24,7 @@ async fn agg(expose: bool) -> Aggregator {
 
 #[tokio::test]
 async fn meta_tools_flow() {
+    isolate_cache();
     let a = agg(false).await;
     let servers = a.list_servers().await.unwrap();
     assert_eq!(servers.len(), 1);
@@ -41,6 +54,7 @@ async fn meta_tools_flow() {
 
 #[tokio::test]
 async fn exposed_routing_longest_prefix() {
+    isolate_cache();
     let bin = env!("CARGO_BIN_EXE_mcp-mock");
     let text = format!(
         r#"{{"mcpServers":{{"a":{{"command":{bin:?},"expose":true}},"a__b":{{"command":{bin:?},"expose":true}}}}}}"#
@@ -66,6 +80,7 @@ async fn exposed_routing_longest_prefix() {
 
 #[tokio::test]
 async fn meta_tools_stay_lazy_with_dead_servers() {
+    isolate_cache();
     // one working mock, one unspawnable server, one that hangs without speaking MCP (10s connect timeout)
     let bin = env!("CARGO_BIN_EXE_mcp-mock");
     let text = format!(
@@ -127,6 +142,7 @@ async fn meta_tools_stay_lazy_with_dead_servers() {
 
 #[tokio::test]
 async fn describe_blocked_tool_reports_config_block() {
+    isolate_cache();
     let bin = env!("CARGO_BIN_EXE_mcp-mock");
     let text = format!(r#"{{"mcpServers":{{"mock":{{"command":{bin:?},"deny":["echo"]}}}}}}"#);
     let cfg: Config = serde_json::from_str(&text).unwrap();

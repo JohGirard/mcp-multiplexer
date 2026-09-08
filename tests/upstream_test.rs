@@ -1,5 +1,18 @@
 use mcp_multiplexer::{cache::Cache, config::Config, upstream::Upstreams};
 
+/// Keep refresh()'s internal cache save off the user's real ~/.cache.
+/// One shared temp dir per test process; config-hash gating keeps the
+/// individual tests from seeing each other's index.
+fn isolate_cache() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("mcpmux-test-cache-{}", std::process::id()));
+        // SAFETY: every test fn in this process calls isolate_cache() before
+        // touching the cache, so the Once write precedes any cache_dir() read.
+        unsafe { std::env::set_var("XDG_CACHE_HOME", &dir) };
+    });
+}
+
 fn test_config() -> Config {
     let bin = env!("CARGO_BIN_EXE_mcp-mock");
     let text = format!(r#"{{"mcpServers":{{"mock":{{"command":{bin:?}}}}}}}"#);
@@ -8,6 +21,7 @@ fn test_config() -> Config {
 
 #[tokio::test]
 async fn lazy_connect_and_call() {
+    isolate_cache();
     let ups = Upstreams::new(test_config(), Cache::default(), 0);
     assert_eq!(ups.status("mock"), "cold");
     let tools = ups.tools("mock").await.unwrap();
@@ -31,6 +45,7 @@ async fn lazy_connect_and_call() {
 
 #[tokio::test]
 async fn unknown_tool_rerefreshes_and_errors() {
+    isolate_cache();
     let ups = Upstreams::new(test_config(), Cache::default(), 0);
     let err = ups
         .call("mock", "nonexistent", None)
@@ -44,6 +59,7 @@ async fn unknown_tool_rerefreshes_and_errors() {
 
 #[tokio::test]
 async fn denied_tool_blocked() {
+    isolate_cache();
     let bin = env!("CARGO_BIN_EXE_mcp-mock");
     let text = format!(r#"{{"mcpServers":{{"mock":{{"command":{bin:?},"deny":["echo"]}}}}}}"#);
     let cfg: Config = serde_json::from_str(&text).unwrap();
@@ -67,6 +83,7 @@ async fn denied_tool_blocked() {
 
 #[tokio::test]
 async fn allow_filtered_tool_blocked() {
+    isolate_cache();
     let bin = env!("CARGO_BIN_EXE_mcp-mock");
     let text = format!(r#"{{"mcpServers":{{"mock":{{"command":{bin:?},"allow":["add"]}}}}}}"#);
     let cfg: Config = serde_json::from_str(&text).unwrap();
@@ -90,6 +107,7 @@ async fn allow_filtered_tool_blocked() {
 
 #[tokio::test]
 async fn dead_upstream_reconnects_and_retries() {
+    isolate_cache();
     // mock self-terminates ~50ms after answering each echo call (MOCK_DIE_AFTER_CALL)
     let bin = env!("CARGO_BIN_EXE_mcp-mock");
     let text = format!(
@@ -116,6 +134,7 @@ async fn dead_upstream_reconnects_and_retries() {
 
 #[tokio::test]
 async fn unspawnable_server_errors_without_wedging() {
+    isolate_cache();
     // `true` spawns but exits immediately, so every connect attempt fails
     let text = r#"{"mcpServers":{"dead":{"command":"true"}}}"#;
     let cfg: Config = serde_json::from_str(text).unwrap();

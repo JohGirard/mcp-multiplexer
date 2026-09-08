@@ -20,6 +20,9 @@ struct Args {
     /// Print JSON Schema for the config file and exit
     #[arg(long)]
     dump_schema: bool,
+    /// Print token-savings stats (from the cache; no server start) and exit
+    #[arg(long)]
+    stats: bool,
 }
 
 fn init_logging(verbose: bool, log_file: Option<&std::path::Path>) {
@@ -50,6 +53,10 @@ async fn main() -> anyhow::Result<()> {
     if args.dump_schema {
         let schema = schemars::schema_for!(mcp_multiplexer::config::Config);
         println!("{}", serde_json::to_string_pretty(&schema)?);
+        return Ok(());
+    }
+    if args.stats {
+        print!("{}", mcp_multiplexer::stats::report());
         return Ok(());
     }
     tracing::info!(config = %args.config.display(), "starting");

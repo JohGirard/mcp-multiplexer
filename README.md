@@ -167,6 +167,23 @@ runtimes (node, uv, …) inside the image.
 - `RUST_LOG` env var controls the level (e.g. `RUST_LOG=debug`); `--verbose`
   is shorthand for debug logging.
 
+## Stats
+
+`mcp-multiplexer --stats` prints what the mux is saving you (no server start;
+reads `~/.cache/mcp-multiplexer/`):
+
+```
+Startup context per session:
+  without mux: ~16333 tokens (46 tools)
+  with mux:    ~553 tokens (meta-tools)
+  saved:       ~15780 tokens (96%)
+```
+
+(example: one GitLab server) plus on-demand schema bytes served, proxied call
+counts, and per-meta-tool usage. Tokens are estimated as bytes/4 — a
+heuristic, not a real tokenizer. With the Claude Code plugin installed,
+`/mcp-multiplexer:gain` shows the same report in chat.
+
 ## Non-goals
 
 - MCP resources and prompts (tools only).

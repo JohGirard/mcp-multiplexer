@@ -4,4 +4,5 @@ pub mod model;
 pub mod oauth;
 pub mod search;
 pub mod server;
+pub mod stats;
 pub mod upstream;

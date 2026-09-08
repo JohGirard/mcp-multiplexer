@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::model::ToolInfo;
 use crate::search::search;
+use crate::stats::Stats;
 use crate::upstream::Upstreams;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::tool::ToolCallContext;
@@ -82,18 +83,28 @@ pub struct Aggregator {
     cfg: Config,
     ups: Arc<Upstreams>,
     tool_router: ToolRouter<Self>,
+    stats: Arc<Stats>,
 }
 
 fn internal(e: impl std::fmt::Display) -> ErrorData {
     ErrorData::internal_error(e.to_string(), None)
 }
 
+fn json_len<T: serde::Serialize>(v: &T) -> u64 {
+    serde_json::to_string(v)
+        .map(|s| s.len() as u64)
+        .unwrap_or(0)
+}
+
 impl Aggregator {
     pub fn new(cfg: Config, ups: Arc<Upstreams>) -> Aggregator {
+        let tool_router = Self::tool_router();
+        let meta_bytes = tool_router.list_all().iter().map(json_len).sum();
         Aggregator {
             cfg,
             ups,
-            tool_router: Self::tool_router(),
+            tool_router,
+            stats: Stats::new(meta_bytes),
         }
     }
 
@@ -276,6 +287,7 @@ impl Aggregator {
         description = "List connected MCP servers: name, status, tool count, instructions"
     )]
     async fn list_servers_tool(&self) -> Result<String, ErrorData> {
+        self.stats.record_meta("list_servers").await;
         let v = self.list_servers().await.map_err(internal)?;
         serde_json::to_string_pretty(&v).map_err(internal)
     }
@@ -288,6 +300,7 @@ impl Aggregator {
         &self,
         Parameters(p): Parameters<ServerArg>,
     ) -> Result<String, ErrorData> {
+        self.stats.record_meta("list_tools").await;
         let v = self.list_tools(p.server).await.map_err(internal)?;
         serde_json::to_string_pretty(&v).map_err(internal)
     }
@@ -300,10 +313,14 @@ impl Aggregator {
         &self,
         Parameters(p): Parameters<SearchArgs>,
     ) -> Result<String, ErrorData> {
+        self.stats.record_meta("search_tools").await;
         let v = self
             .search_tools(p.query, p.server, p.limit.unwrap_or(5).min(25))
             .await
             .map_err(internal)?;
+        self.stats
+            .record_served(v.iter().map(|(_, t)| json_len(&t.schema)).sum())
+            .await;
         serde_json::to_string_pretty(&v).map_err(internal)
     }
 
@@ -315,6 +332,7 @@ impl Aggregator {
         &self,
         Parameters(p): Parameters<RefreshArgs>,
     ) -> Result<String, ErrorData> {
+        self.stats.record_meta("refresh_tools").await;
         let v = self.refresh_tools(p.server).await.map_err(internal)?;
         serde_json::to_string_pretty(&v).map_err(internal)
     }
@@ -327,10 +345,12 @@ impl Aggregator {
         &self,
         Parameters(p): Parameters<DescribeArgs>,
     ) -> Result<String, ErrorData> {
+        self.stats.record_meta("describe_tool").await;
         let v = self
             .describe_tool(p.server, p.tool)
             .await
             .map_err(internal)?;
+        self.stats.record_served(json_len(&v.schema)).await;
         serde_json::to_string_pretty(&v).map_err(internal)
     }
 
@@ -342,6 +362,8 @@ impl Aggregator {
         &self,
         Parameters(p): Parameters<CallArgs>,
     ) -> Result<CallToolResult, ErrorData> {
+        self.stats.record_meta("call_tool").await;
+        self.stats.record_proxied().await;
         self.call_tool(p.server, p.tool, p.arguments).await
     }
 
@@ -353,6 +375,7 @@ impl Aggregator {
         &self,
         Parameters(p): Parameters<AuthorizeArgs>,
     ) -> Result<String, ErrorData> {
+        self.stats.record_meta("authorize_server").await;
         self.authorize_server(p.server, p.pasted_url)
             .await
             .map_err(internal)
@@ -402,6 +425,7 @@ impl ServerHandler for Aggregator {
     ) -> Result<CallToolResponse, ErrorData> {
         if let Some((server, tool)) = self.route_exposed(&req.name) {
             let tool = tool.to_string();
+            self.stats.record_proxied().await;
             return self
                 .ups
                 .call(server, &tool, req.arguments)
