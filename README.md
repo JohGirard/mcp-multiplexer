@@ -1,7 +1,10 @@
 # mcp-multiplexer
 
-One MCP server fronting many. Point your AI client at the aggregator and it
-presents **5 meta-tools** instead of every upstream server's full tool schemas —
+[![CI](https://github.com/johgirard/mcp-multiplexer/actions/workflows/ci.yml/badge.svg)](https://github.com/johgirard/mcp-multiplexer/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/mcp-multiplexer.svg)](https://crates.io/crates/mcp-multiplexer)
+
+One MCP server fronting many. Point your AI client at the multiplexer and it
+presents **6 meta-tools** instead of every upstream server's full tool schemas —
 slashing the tokens spent loading tool definitions into the model's context at
 session start.
 
@@ -19,6 +22,7 @@ based and remote HTTP upstreams) that exposes only:
 | `search_tools(query, server?, limit=5)` | Matching tools **with full input schemas** |
 | `describe_tool(server, tool)` | One exact tool's full input schema |
 | `call_tool(server, tool, arguments)` | Proxied call; results returned verbatim |
+| `refresh_tools(server?)` | Reconnect and rebuild the tool index |
 
 The model discovers tools lazily — list and search first, fetch a full schema
 only when it's about to call. The tool index is cached at
@@ -31,6 +35,9 @@ connect lazily.
 cargo install mcp-multiplexer
 ```
 
+This also installs `mcp-mock`, a tiny echo server used by the test suite —
+harmless, ignore it.
+
 ## Configuration
 
 Standard `mcpServers` format (Claude Code / Claude Desktop compatible), plus
@@ -41,6 +48,10 @@ per-server extras:
 - `allow`: list of exact names or `prefix*` globs — only these tools are visible.
 - `deny`: list, always wins over `allow`.
 
+Strings in `command`, `args`, `env`, `url`, and `headers` support `${VAR}`
+environment expansion (same as Claude Code). An unset variable or unclosed
+`${` fails startup with a clear error — so keep secrets out of the config:
+
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/johgirard/mcp-multiplexer/main/schema.json",
@@ -50,9 +61,14 @@ per-server extras:
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/me/docs"],
       "allow": ["read_file", "list_directory"]
     },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" }
+    },
     "web": {
       "url": "https://example.com/mcp",
-      "headers": { "Authorization": "Bearer token" },
+      "headers": { "Authorization": "Bearer ${API_TOKEN}" },
       "deny": ["admin_*"]
     },
     "fast": {
@@ -68,18 +84,25 @@ Run with `mcp-multiplexer --config /path/to/.mcp.json` (defaults to
 
 ## Claude Code
 
-Replace all your `mcpServers` entries with one pointing at the aggregator:
+Replace all your `mcpServers` entries with one pointing at the multiplexer:
 
 ```json
 {
   "mcpServers": {
-    "aggregator": {
+    "mux": {
       "command": "mcp-multiplexer",
       "args": ["--config", "/home/me/.mcp.json"]
     }
   }
 }
 ```
+
+## When upstream tools change
+
+The index is built on first connect and cached on disk. If an upstream server
+adds or removes tools, call `refresh_tools` (optionally with a server name) to
+re-index — no restart needed. `call_tool` also self-heals: a failed call
+triggers one reconnect, re-index, and retry before surfacing the error.
 
 ## Docker
 
@@ -104,12 +127,19 @@ runtimes (node, uv, …) inside the image.
 - Upstream sampling, elicitation, and roots.
 - No truncation of tool results — returned verbatim.
 - No auth flows for remote servers (static headers only).
-- No env-var expansion in the config file.
+- No `tools/list_changed` notification forwarding — use `refresh_tools`.
 
 ## Development
 
 `src/bin/mcp-mock.rs` builds an `mcp-mock` dev binary (echo/add/fail tools)
 used by the integration tests.
+
+```sh
+cargo test
+```
+
+Releases are tagged `v*`; CI runs tests/clippy/fmt on push and publishes to
+crates.io and ghcr.io on tags.
 
 ## License
 
