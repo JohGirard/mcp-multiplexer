@@ -122,7 +122,16 @@ impl OAuth {
     ) -> anyhow::Result<Option<String>> {
         self.ensure_state(cfg, store).await?;
         let g = self.state.lock().await;
-        match g.as_ref().unwrap().get_access_token().await {
+        // rmcp quirk: OAuthState::get_access_token always errors "Already
+        // authorized" once the state machine reaches Authorized — the token is
+        // only reachable through the inner manager. An in-process browser flow
+        // lands in Authorized; fresh processes read via Unauthorized(manager)
+        // and never notice. Read the manager directly in that state.
+        let res = match g.as_ref().unwrap() {
+            OAuthState::Authorized(m) => m.get_access_token().await,
+            st => st.get_access_token().await,
+        };
+        match res {
             Ok(t) => Ok(Some(t)),
             Err(AuthError::AuthorizationRequired) => Ok(None),
             Err(e) => Err(anyhow!("oauth token: {e}")),
