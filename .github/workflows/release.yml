@@ -39,9 +39,7 @@ jobs:
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/mcp-multiplexer.exe \
-            -DestinationPath mcp-multiplexer-${{ matrix.target }}.zip
+        run: Compress-Archive -Path target/${{ matrix.target }}/release/mcp-multiplexer.exe -DestinationPath mcp-multiplexer-${{ matrix.target }}.zip
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
