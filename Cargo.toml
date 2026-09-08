@@ -6,7 +6,7 @@ description = "One MCP server fronting many: 7 meta-tools instead of every tool 
 license = "MIT"
 repository = "https://github.com/johgirard/mcp-multiplexer"
 default-run = "mcp-multiplexer"
-keywords = ["mcp", "model-context-protocol", "claude", "multiplexer", "proxy"]
+keywords = ["mcp", "mcp-server", "claude", "multiplexer", "proxy"]
 categories = ["network-programming", "command-line-utilities"]
 
 [dependencies]
