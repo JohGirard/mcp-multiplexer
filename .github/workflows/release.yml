@@ -32,7 +32,7 @@ jobs:
           awk '/^## \['"${TAG#v}"'\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > notes.md
           [ -s notes.md ] || { echo "::error::no CHANGELOG.md section for ${TAG}"; exit 1; }
       - name: Create GitHub Release with notes
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.TAG }}
           body_path: notes.md
@@ -76,7 +76,7 @@ jobs:
           $f = "mcp-multiplexer-${{ matrix.target }}.zip"
           "$((Get-FileHash $f).Hash.ToLower())  $f" | Out-File -Encoding ascii "$f.sha256"
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           files: mcp-multiplexer-${{ matrix.target }}.*
