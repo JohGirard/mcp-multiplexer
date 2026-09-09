@@ -59,7 +59,9 @@ whatever the user prefers). For each migrated server:
   a real token into the config. Afterwards, check each referenced var with
   `printenv VAR_NAME` and warn the user about any that are unset (the mux
   refuses to start on unset vars — by design, so typos don't silently drop
-  credentials).
+  credentials). Slow-to-start local servers (e.g. `uvx --from git+…` building
+  on every cold start) can exceed the default 10s connect timeout — set
+  `"connect_timeout": 60`.
 - **url**: copy `url` and `headers`. Static bearer tokens →
   `"Authorization": "Bearer ${VAR_NAME}"`. OAuth login instead:
   `"oauth": true`. Known OAuth endpoints (set it without asking; otherwise
@@ -128,6 +130,10 @@ Two failure shapes have known fixes:
   then set `oauth_client_id` (and `oauth_redirect_port` + registering
   `http://127.0.0.1:<port>/callback` if it requires exact redirect URIs —
   Okta-backed providers usually do).
+- `AADSTS50011` (redirect URI mismatch) naming a client ID you never
+  registered → the provider fronts a fixed first-party OAuth app (e.g.
+  Microsoft's own) whose app registration forbids loopback redirects. Not
+  fixable by mux — keep that server as a direct client connector.
 
 Then tell the user:
 

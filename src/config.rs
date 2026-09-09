@@ -58,6 +58,9 @@ pub struct ServerConfig {
     /// Fixed port for the 127.0.0.1 callback listener, for providers that
     /// require an exact pre-registered redirect URI. Default: ephemeral port
     pub oauth_redirect_port: Option<u16>,
+    /// Connection/startup timeout in seconds (default 10); raise for
+    /// slow-to-start local servers (e.g. uvx building from a git ref)
+    pub connect_timeout: Option<u64>,
 }
 
 pub fn glob_match(pat: &str, name: &str) -> bool {
