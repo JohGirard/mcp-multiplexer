@@ -74,7 +74,7 @@ jobs:
         run: |
           Compress-Archive -Path target/${{ matrix.target }}/release/mcp-multiplexer.exe -DestinationPath mcp-multiplexer-${{ matrix.target }}.zip
           $f = "mcp-multiplexer-${{ matrix.target }}.zip"
-          "$((Get-FileHash $f).Hash.ToLower())  $f" | Out-File -Ascii "$f.sha256"
+          "$((Get-FileHash $f).Hash.ToLower())  $f" | Out-File -Encoding ascii "$f.sha256"
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
