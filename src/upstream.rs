@@ -26,7 +26,7 @@ pub struct Upstreams {
     config_hash: u64,
 }
 
-const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 10;
 
 async fn connect(
     e: &Entry,
@@ -80,12 +80,11 @@ async fn connect(
             bail!("server has neither command nor url")
         }
     };
-    match tokio::time::timeout(CONNECT_TIMEOUT, fut).await {
+    let timeout =
+        std::time::Duration::from_secs(cfg.connect_timeout.unwrap_or(DEFAULT_CONNECT_TIMEOUT_SECS));
+    match tokio::time::timeout(timeout, fut).await {
         Ok(r) => r,
-        Err(_) => Err(anyhow!(
-            "connect timed out after {}s",
-            CONNECT_TIMEOUT.as_secs()
-        )),
+        Err(_) => Err(anyhow!("connect timed out after {}s", timeout.as_secs())),
     }
 }
 

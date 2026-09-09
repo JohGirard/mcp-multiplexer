@@ -75,7 +75,8 @@ so paste instead:
 - Location: `~/.cache/mcp-multiplexer/tokens.json` (`$XDG_CACHE_HOME` aware),
   mode `0600`, one entry per server.
 - Contains access + refresh tokens and the dynamically-registered client ID
-  (reused across restarts so providers don't accumulate clients).
+  (reused across restarts so providers don't accumulate clients; if a provider
+  forgets the registration, mux discards it and re-registers automatically).
 - Refresh is automatic and transparent; a revoked refresh token simply
   triggers the authorization flow again on next use.
 - **Log out:** delete the server's entry from `tokens.json`. Also revoke the
@@ -105,5 +106,8 @@ registration, scope discovery, refresh all work.
 | Provider rejects the redirect URI | pre-registered app requires an exact URI | set `oauth_redirect_port` and register `http://127.0.0.1:<port>/callback` |
 | `oauth init … metadata discovery failed` | provider has no RFC 8414/9728 metadata, or wrong URL | check the `url`; if the provider is non-standard, file an issue |
 | Dynamic registration refused | provider doesn't support RFC 7591 | create an OAuth app manually, set `oauth_client_id` (+ `oauth_redirect_port`) |
+| `Authorization server issuer mismatch` | provider delegates auth to a different domain than the MCP host (declared `issuer` lives on another domain) | upgrade mux — current versions trust the issuer the discovery document declares |
+| `invalid_client: Invalid client_id` on refresh | provider forgot the dynamic registration (non-persistent DCR) | nothing — mux clears the stale registration, re-registers, and asks you to re-authorize once |
+| Redirect-URI mismatch naming an unknown client ID | provider fronts a fixed first-party OAuth app that forbids loopback redirects (hosted first-party connectors do this) | not mux-fixable — use the vendor's own connector |
 | Constantly asked to re-authorize | refresh token revoked/expired | expected: re-approve once; check provider's token TTL settings if it recurs |
 | Want to force re-login | — | delete the server's entry in `tokens.json` and retry |

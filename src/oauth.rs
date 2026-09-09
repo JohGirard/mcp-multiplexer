@@ -2,8 +2,8 @@ use crate::cache::cache_dir;
 use crate::config::ServerConfig;
 use anyhow::{anyhow, bail};
 use rmcp::transport::auth::{
-    AuthError, AuthorizationManager, AuthorizationRequest, CredentialStore, OAuthState,
-    StoredCredentials,
+    AuthError, AuthorizationManager, AuthorizationMetadata, AuthorizationRequest,
+    AuthorizationSession, CredentialStore, OAuthState, StoredCredentials,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -82,6 +82,69 @@ impl CredentialStore for TokenStore {
     }
 }
 
+/// rmcp enforces RFC 8414 §3.3: the discovered `issuer` must match the host the
+/// metadata was fetched from. Some providers delegate auth to a different
+/// domain than the MCP endpoint — the resource lives on one host, the declared
+/// `issuer` on another — and fail that check despite serving valid metadata.
+/// When strict discovery rejects the mismatch, re-fetch the same well-known
+/// candidates trusting the issuer the document itself declares.
+/// Same candidate order as rmcp's `generate_discovery_urls`.
+async fn discover_metadata_trusting_issuer(base: &str) -> anyhow::Result<AuthorizationMetadata> {
+    let base: reqwest::Url = base
+        .parse()
+        .map_err(|e| anyhow!("bad server url {base:?}: {e}"))?;
+    let trimmed = base.path().trim_start_matches('/').trim_end_matches('/');
+    let candidates: Vec<String> = if trimmed.is_empty() {
+        vec![
+            "/.well-known/oauth-authorization-server".into(),
+            "/.well-known/openid-configuration".into(),
+        ]
+    } else {
+        vec![
+            format!("/.well-known/oauth-authorization-server/{trimmed}"),
+            format!("/.well-known/openid-configuration/{trimmed}"),
+            format!("/{trimmed}/.well-known/openid-configuration"),
+            "/.well-known/oauth-authorization-server".into(),
+        ]
+    };
+    let client = reqwest::Client::new();
+    for path in &candidates {
+        let mut url = base.clone();
+        url.set_query(None);
+        url.set_fragment(None);
+        url.set_path(path);
+        let Ok(resp) = client.get(url).send().await else {
+            continue;
+        };
+        if resp.status() != reqwest::StatusCode::OK {
+            continue;
+        }
+        if let Ok(md) = resp.json::<AuthorizationMetadata>().await {
+            return Ok(md);
+        }
+    }
+    anyhow::bail!("oauth: no authorization server metadata found for {base}")
+}
+
+fn warn_relaxed_issuer(url: &str, md: &AuthorizationMetadata) {
+    tracing::warn!(
+        server_url = url,
+        issuer = md.issuer.as_deref().unwrap_or("<missing>"),
+        "oauth: issuer differs from the MCP server host; trusting discovered metadata (relaxed RFC 8414 issuer check)"
+    );
+}
+
+/// ponytail: heuristic — rmcp surfaces a provider's invalid_client only as an
+/// error string; the registration is gone server-side (e.g. non-durable DCR),
+/// so drop client_id+tokens and let the next call re-register and re-authorize.
+fn is_stale_client_error(e: &AuthError) -> bool {
+    matches!(
+        e,
+        AuthError::TokenRefreshFailed(m) | AuthError::TokenRefreshRejected(m)
+            if m.contains("invalid_client")
+    )
+}
+
 /// OAuth state for one server: the rmcp state machine plus the pending
 /// callback-listener task of an in-flight authorization.
 pub struct OAuth {
@@ -105,9 +168,18 @@ impl OAuth {
                 .await
                 .map_err(|e| anyhow!("oauth init for {url}: {e}"))?;
             m.set_credential_store(store.clone());
-            m.initialize_from_store()
-                .await
-                .map_err(|e| anyhow!("oauth credential init: {e}"))?;
+            if let Err(e) = m.initialize_from_store().await {
+                if matches!(e, AuthError::AuthorizationServerMismatch { .. }) {
+                    let md = discover_metadata_trusting_issuer(url).await?;
+                    warn_relaxed_issuer(url, &md);
+                    m.set_metadata(md);
+                    m.initialize_from_store()
+                        .await
+                        .map_err(|e| anyhow!("oauth credential init: {e}"))?;
+                } else {
+                    return Err(anyhow!("oauth credential init: {e}"));
+                }
+            }
             *g = Some(OAuthState::Unauthorized(m));
         }
         Ok(())
@@ -134,6 +206,14 @@ impl OAuth {
         match res {
             Ok(t) => Ok(Some(t)),
             Err(AuthError::AuthorizationRequired) => Ok(None),
+            Err(e) if is_stale_client_error(&e) => {
+                tracing::warn!(%e, "oauth: stored client registration rejected; clearing credentials to re-register");
+                store
+                    .clear()
+                    .await
+                    .map_err(|e| anyhow!("oauth token: {e}"))?;
+                Ok(None)
+            }
             Err(e) => Err(anyhow!("oauth token: {e}")),
         }
     }
@@ -148,9 +228,11 @@ impl OAuth {
     ) -> anyhow::Result<String> {
         self.ensure_state(cfg, store).await?;
         let mut g = self.state.lock().await;
-        let st = g.as_mut().unwrap();
-        if matches!(st, OAuthState::Session(_)) {
-            return st.get_authorization_url().await.map_err(|e| anyhow!("{e}"));
+        {
+            let st = g.as_mut().unwrap();
+            if matches!(st, OAuthState::Session(_)) {
+                return st.get_authorization_url().await.map_err(|e| anyhow!("{e}"));
+            }
         }
         // bind first: the port is part of the redirect URI
         let port = cfg.oauth_redirect_port.unwrap_or(0);
@@ -158,21 +240,49 @@ impl OAuth {
             .await
             .map_err(|e| anyhow!("cannot bind oauth callback on 127.0.0.1:{port}: {e}"))?;
         let port = listener.local_addr()?.port();
-        let mut req = AuthorizationRequest::new(format!("http://127.0.0.1:{port}/callback"))
-            .with_client_name("mcp-multiplexer");
-        if !cfg.oauth_scopes.is_empty() {
-            req = req.with_scopes(cfg.oauth_scopes.clone());
-        }
-        if let Some(cid) = match &cfg.oauth_client_id {
+        let client_id = match &cfg.oauth_client_id {
             Some(c) => Some(c.clone()),
             None => store.stored_client_id().await,
-        } {
-            req = req.with_preregistered_client(cid);
+        };
+        let build_req = || {
+            let mut req = AuthorizationRequest::new(format!("http://127.0.0.1:{port}/callback"))
+                .with_client_name("mcp-multiplexer");
+            if !cfg.oauth_scopes.is_empty() {
+                req = req.with_scopes(cfg.oauth_scopes.clone());
+            }
+            if let Some(cid) = &client_id {
+                req = req.with_preregistered_client(cid.clone());
+            }
+            req
+        };
+        let start = g.as_mut().unwrap().start_authorization(build_req()).await;
+        match start {
+            Ok(()) => {}
+            Err(AuthError::AuthorizationServerMismatch { .. }) => {
+                // rmcp's strict discovery restored Unauthorized state; redo
+                // discovery trustingly and build the session directly.
+                let url = cfg.url.as_deref().unwrap_or_default();
+                let md = discover_metadata_trusting_issuer(url).await?;
+                warn_relaxed_issuer(url, &md);
+                let taken = g.take().unwrap();
+                let OAuthState::Unauthorized(mut m) = taken else {
+                    *g = Some(taken);
+                    bail!("oauth: unexpected state after failed discovery");
+                };
+                m.set_metadata(md);
+                match AuthorizationSession::new(m, build_req()).await {
+                    Ok(session) => *g = Some(OAuthState::Session(session)),
+                    Err((m, e)) => {
+                        *g = Some(OAuthState::Unauthorized(m));
+                        return Err(anyhow!("oauth: {e}"));
+                    }
+                }
+            }
+            Err(e) => return Err(anyhow!("oauth: {e}")),
         }
-        st.start_authorization(req)
-            .await
-            .map_err(|e| anyhow!("oauth: {e}"))?;
-        let url = st
+        let url = g
+            .as_mut()
+            .unwrap()
             .get_authorization_url()
             .await
             .map_err(|e| anyhow!("{e}"))?;
@@ -263,6 +373,57 @@ mod tests {
         );
         assert_eq!(request_path("POST /callback HTTP/1.1"), None);
         assert_eq!(request_path("garbage"), None);
+    }
+
+    #[test]
+    fn detects_stale_client_registration() {
+        let e = AuthError::TokenRefreshFailed(
+            "Server returned error response: invalid_client: Invalid client_id".into(),
+        );
+        assert!(is_stale_client_error(&e));
+        assert!(!is_stale_client_error(&AuthError::AuthorizationRequired));
+        assert!(!is_stale_client_error(&AuthError::TokenRefreshFailed(
+            "connection refused".into()
+        )));
+    }
+
+    #[tokio::test]
+    async fn relaxed_discovery_trusts_cross_host_issuer() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let body = r#"{"issuer":"https://auth.other-host.example","authorization_endpoint":"https://auth.other-host.example/authorize","token_endpoint":"https://auth.other-host.example/token"}"#;
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = [0u8; 2048];
+                let n = sock.read(&mut buf).await.unwrap();
+                let req = String::from_utf8_lossy(&buf[..n]);
+                // only the canonical well-known path serves metadata; the
+                // path-insertion candidates 404, exercising the fallback order
+                let (status, body) =
+                    if req.starts_with("GET /.well-known/oauth-authorization-server ") {
+                        ("200 OK", body)
+                    } else {
+                        ("404 Not Found", "not found")
+                    };
+                sock.write_all(
+                    format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes(),
+                )
+                .await
+                .unwrap();
+            }
+        });
+        let md = discover_metadata_trusting_issuer(&format!("http://127.0.0.1:{port}/mcp"))
+            .await
+            .unwrap();
+        assert_eq!(
+            md.issuer.as_deref(),
+            Some("https://auth.other-host.example")
+        );
+        assert_eq!(md.token_endpoint, "https://auth.other-host.example/token");
+        server.abort();
     }
 
     #[tokio::test]

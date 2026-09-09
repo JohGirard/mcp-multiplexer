@@ -1,6 +1,6 @@
 [package]
 name = "mcp-multiplexer"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "One MCP server fronting many: 7 meta-tools instead of every tool schema in context"
 license = "MIT"
@@ -14,6 +14,7 @@ anyhow = "1.0.104"
 async-trait = "0.1"
 clap = { version = "4.6.6", features = ["derive"] }
 http = "1"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }  # rustls to match rmcp's TLS stack
 rmcp = { version = "3.2", features = ["client", "server", "macros", "auth", "reqwest", "transport-child-process", "transport-io", "transport-streamable-http-client-reqwest"] }  # "reqwest" feature = rustls; without it ALL https upstreams fail ("scheme is not http")
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }

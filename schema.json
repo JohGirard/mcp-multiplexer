@@ -42,6 +42,16 @@
           ],
           "default": null
         },
+        "connect_timeout": {
+          "description": "Connection/startup timeout in seconds (default 10); raise for\nslow-to-start local servers (e.g. uvx building from a git ref)",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
         "deny": {
           "description": "Always hidden/blocked; wins over allow",
           "type": "array",
