@@ -9,7 +9,28 @@ permissions:
   packages: write
 
 jobs:
+  # Gate: the tag must match Cargo.toml's version and have a CHANGELOG.md
+  # section, which becomes the GitHub release notes.
+  notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          cargo_version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          [ "$tag" = "$cargo_version" ] || { echo "::error::tag v$tag != Cargo.toml version $cargo_version"; exit 1; }
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          awk '/^## \['"${GITHUB_REF_NAME#v}"'\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "::error::no CHANGELOG.md section for ${GITHUB_REF_NAME}"; exit 1; }
+      - name: Create GitHub Release with notes
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: notes.md
+
   binaries:
+    needs: notes
     strategy:
       fail-fast: false
       matrix:
@@ -37,10 +58,15 @@ jobs:
           strip target/${{ matrix.target }}/release/mcp-multiplexer || true
           tar -czvf mcp-multiplexer-${{ matrix.target }}.tar.gz \
             -C target/${{ matrix.target }}/release mcp-multiplexer
+          sha256sum mcp-multiplexer-${{ matrix.target }}.tar.gz \
+            > mcp-multiplexer-${{ matrix.target }}.tar.gz.sha256
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path target/${{ matrix.target }}/release/mcp-multiplexer.exe -DestinationPath mcp-multiplexer-${{ matrix.target }}.zip
+        run: |
+          Compress-Archive -Path target/${{ matrix.target }}/release/mcp-multiplexer.exe -DestinationPath mcp-multiplexer-${{ matrix.target }}.zip
+          $f = "mcp-multiplexer-${{ matrix.target }}.zip"
+          "$((Get-FileHash $f).Hash.ToLower())  $f" | Out-File -Ascii "$f.sha256"
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -57,6 +83,7 @@ jobs:
       - run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   docker:
+    needs: notes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

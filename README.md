@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/johgirard/mcp-multiplexer/actions/workflows/ci.yml/badge.svg)](https://github.com/johgirard/mcp-multiplexer/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/mcp-multiplexer.svg)](https://crates.io/crates/mcp-multiplexer)
+[![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/johgirard/mcp-multiplexer)
 
 One MCP server fronting many. Point your AI client at the multiplexer and it
 presents **7 meta-tools** instead of every upstream server's full tool schemas —
@@ -57,10 +58,14 @@ harmless, ignore it.
 Standard `mcpServers` format (Claude Code / Claude Desktop compatible), plus
 per-server extras:
 
-- `expose`: boolean — this server's tools appear directly as `server__tool`,
-  bypassing the meta-tools.
+- `expose`: boolean — this server's tools also appear directly as
+  `server__tool`, bypassing the meta-tools. See
+  [Hybrid mode: `expose`](#hybrid-mode-expose).
 - `allow`: list of exact names or `prefix*` globs — only these tools are visible.
 - `deny`: list, always wins over `allow`.
+- `connect_timeout`: seconds — connection/startup timeout (default 10). Raise
+  it for slow-to-start local servers, e.g. `uvx --from git+…` that builds on
+  every cold start.
 
 Strings in `command`, `args`, `env`, `url`, and `headers` support `${VAR}`
 environment expansion (same as Claude Code). An unset variable or unclosed
@@ -100,6 +105,24 @@ environment expansion (same as Claude Code). An unset variable or unclosed
 Run with `mcp-multiplexer --config /path/to/.mcp.json` (defaults to
 `./.mcp.json`).
 
+## Hybrid mode: `expose`
+
+Multiplexing trades a discovery hop (`list_tools` → `describe_tool` →
+`call_tool`) for a near-empty startup context. For servers you call *every
+session, many times*, that hop is pure overhead — you already know the tool,
+and its schema costs a handful of tokens. Set `"expose": true` and that
+server's tools mount **directly** as first-class `server__tool` tools, schema
+and all, next to the meta-tools:
+
+```json
+"serena": { "command": "uvx", "args": ["serena", "start-mcp-server"], "expose": true }
+```
+
+The model then calls `serena__find_symbol` like any directly-connected tool —
+no search, no describe, no proxy hop. The server stays reachable through the
+meta-tools too, and `allow`/`deny` still apply. Rule of thumb: multiplex the
+fleet, expose the favorites.
+
 ## OAuth
 
 Remote servers that speak OAuth 2.1 (the MCP authorization spec) work with
@@ -112,9 +135,12 @@ Remote servers that speak OAuth 2.1 (the MCP authorization spec) work with
   automatically, and survive restarts — authorize once per server.
 
 Scopes are auto-discovered; dynamic client registration is used when the
-provider supports it. Full guide — headless paste flow, `oauth_client_id` /
-`oauth_scopes` / `oauth_redirect_port` tuning, provider notes (GitLab's
-group toggle gotcha), troubleshooting: **[docs/oauth.md](docs/oauth.md)**.
+provider supports it — and self-heals when a provider forgets the
+registration. Providers that delegate auth to a different domain than the MCP
+endpoint (Freshworks-style cross-domain issuers) work out of the box. Full
+guide — headless paste flow, `oauth_client_id` / `oauth_scopes` /
+`oauth_redirect_port` tuning, provider notes (GitLab's group toggle gotcha),
+troubleshooting: **[docs/oauth.md](docs/oauth.md)**.
 
 ## Claude Code
 
@@ -212,8 +238,17 @@ npx @modelcontextprotocol/inspector --web -- \
   mcp-multiplexer --config /path/to/.mcp.json
 ```
 
-Releases are tagged `v*`; CI runs tests/clippy/fmt on push and publishes to
-crates.io and ghcr.io on tags.
+## Releases
+
+[CHANGELOG.md](CHANGELOG.md) documents every release. Cutting one:
+
+1. Add a `## [X.Y.Z]` section to CHANGELOG.md and bump `version` in Cargo.toml.
+2. Commit as `chore: release vX.Y.Z`, tag `vX.Y.Z`, push commit and tag.
+
+The tag workflow verifies the tag matches the crate version, creates the
+GitHub release with the changelog section as its notes, attaches per-platform
+binaries **with SHA256 checksums**, publishes to crates.io, and pushes
+`ghcr.io/johgirard/mcp-multiplexer` images tagged `latest` and `vX.Y.Z`.
 
 ## License
 
