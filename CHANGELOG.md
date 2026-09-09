@@ -4,7 +4,7 @@ All notable changes to mcp-multiplexer. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
-## [0.3.0] - 2026-09-09
+## [0.3.1] - 2026-09-09
 
 ### Added
 
@@ -73,7 +73,7 @@ Initial release.
 - Prebuilt binaries for Linux, macOS, and Windows; crates.io and ghcr.io
   publishing.
 
-[0.3.0]: https://github.com/johgirard/mcp-multiplexer/compare/v0.2.1...v0.3.0
+[0.3.1]: https://github.com/johgirard/mcp-multiplexer/compare/v0.2.1...v0.3.1
 [0.2.1]: https://github.com/johgirard/mcp-multiplexer/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/johgirard/mcp-multiplexer/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/johgirard/mcp-multiplexer/releases/tag/v0.1.0
