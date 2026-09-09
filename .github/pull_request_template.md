@@ -8,3 +8,4 @@
 - [ ] `cargo test` passes (added/updated tests for behavior changes)
 - [ ] `schema.json` regenerated (`cargo run -- --dump-schema > schema.json`) if CLI args or the config format changed
 - [ ] README updated if user-facing behavior changed
+- [ ] CHANGELOG.md has a section for the next version (release PRs only)
