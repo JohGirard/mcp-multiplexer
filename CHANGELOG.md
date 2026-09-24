@@ -4,6 +4,30 @@ All notable changes to mcp-multiplexer. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.4.0] - 2026-09-24
+
+### Fixed
+
+- `tools/list` now includes the SEP-2549 cache hints (`ttlMs`, `cacheScope`)
+  required by protocol version 2026-07-28. rmcp 3.4's `#[tool_handler]` macro
+  adds them to its generated `list_tools`, but the multiplexer's hand-written
+  override (which merges exposed upstream tools) unconditionally omitted them —
+  clients on 2026-07-28 (e.g. Claude Code) rejected the entire tool list as
+  invalid, making every upstream tool unreachable.
+
+### Changed
+
+- Server instructions now name all 7 meta-tools with a one-line purpose each
+  (`list_servers`, `list_tools`, `search_tools`, `describe_tool`,
+  `call_tool`, `refresh_tools`, `authorize_server`), so an agent can plan its
+  calls straight from `initialize` — before any `tools/list` round-trip.
+
+### Internal
+
+- rmcp 3.2 → 3.4.1, replacing the deprecated `ServerInfo` alias with
+  `ServerConfig`; clap 4.6.7; reqwest 0.13.5. GitHub Actions updated
+  (actions/checkout v7, docker/login-action v4, and others).
+
 ## [0.3.1] - 2026-09-09
 
 ### Added
@@ -73,6 +97,7 @@ Initial release.
 - Prebuilt binaries for Linux, macOS, and Windows; crates.io and ghcr.io
   publishing.
 
+[0.4.0]: https://github.com/johgirard/mcp-multiplexer/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/johgirard/mcp-multiplexer/compare/v0.2.1...v0.3.1
 [0.2.1]: https://github.com/johgirard/mcp-multiplexer/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/johgirard/mcp-multiplexer/compare/v0.1.0...v0.2.0
