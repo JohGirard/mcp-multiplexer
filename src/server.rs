@@ -386,7 +386,7 @@ impl Aggregator {
 impl ServerHandler for Aggregator {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_instructions("Multiplexed MCP servers. Use list_servers → list_tools/search_tools → describe_tool → call_tool. refresh_tools re-indexes after upstream tool changes. authorize_server handles OAuth login. Tools named server__tool are directly exposed.")
+            .with_instructions("Multiplexed MCP servers, exposed via 7 meta-tools: list_servers (connected servers: name, status, tool count), list_tools (one server's tools, no schemas), search_tools (find tools across servers, with full schemas), describe_tool (full input schema of one exact tool), call_tool (invoke a tool on an upstream server), refresh_tools (re-index after upstream tool changes), authorize_server (OAuth login, headless-capable). Typical flow: list_servers → list_tools or search_tools → describe_tool → call_tool. Servers with expose enabled also surface their tools directly as server__tool.")
     }
 
     async fn list_tools(
