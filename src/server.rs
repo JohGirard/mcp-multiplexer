@@ -384,15 +384,15 @@ impl Aggregator {
 
 #[tool_handler]
 impl ServerHandler for Aggregator {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions("Multiplexed MCP servers. Use list_servers → list_tools/search_tools → describe_tool → call_tool. refresh_tools re-indexes after upstream tool changes. authorize_server handles OAuth login. Tools named server__tool are directly exposed.")
     }
 
     async fn list_tools(
         &self,
         _req: Option<PaginatedRequestParams>,
-        _ctx: RequestContext<RoleServer>,
+        ctx: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         let mut tools = self.tool_router.list_all();
         for (name, sc) in &self.cfg.mcp_servers {
@@ -415,7 +415,16 @@ impl ServerHandler for Aggregator {
                 }
             }
         }
-        Ok(ListToolsResult::with_all_items(tools))
+        // Protocol 2026-07-28 (SEP-2549) requires ttlMs/cacheScope on list results;
+        // mirror what rmcp's #[tool_handler] macro generates for default handlers.
+        let supports_cache_hints = ctx
+            .protocol_version()
+            .is_some_and(|v| v >= ProtocolVersion::V_2026_07_28);
+        let mut result = ListToolsResult::with_all_items(tools);
+        if supports_cache_hints {
+            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Public);
+        }
+        Ok(result)
     }
 
     async fn call_tool(

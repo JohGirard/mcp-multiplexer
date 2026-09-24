@@ -59,8 +59,8 @@ fn die_after_call() {
 
 #[rmcp::tool_handler]
 impl ServerHandler for Mock {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::default().with_instructions("mock upstream for tests")
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::default().with_instructions("mock upstream for tests")
     }
 }
 
