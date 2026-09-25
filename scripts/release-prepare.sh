@@ -48,8 +48,16 @@ log "current version: $current_version (last tag: ${last_tag:-none})"
 
 # ---------------------------------------------------------------- commits ---
 range="${last_tag:+$last_tag..}HEAD"
-# %x1f separates subject from body, %x1e separates commits
-mapfile -t commits < <(git log --no-merges --pretty=$'%s%x1f%b%x1e' "$range")
+# %x1f separates subject from body, %x1e separates commits — the delimiter
+# must be %x1e (not \n) because bodies span lines; the empty record git
+# leaves after the trailing separator is dropped.
+mapfile -d $'\x1e' -t raw < <(git log --no-merges --pretty=$'%s%x1f%b%x1e' "$range")
+commits=()
+for entry in "${raw[@]}"; do
+    entry=${entry#$'\n'}
+    subject=${entry%%$'\x1f'*}
+    [ -n "$subject" ] && commits+=("$entry")
+done
 if [ ${#commits[@]} -eq 0 ]; then
     log "no commits since ${last_tag:-the beginning} — nothing to release"
     exit 0
