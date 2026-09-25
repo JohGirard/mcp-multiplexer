@@ -1,12 +1,21 @@
 name: Release
 
+# Triggered two ways:
+#   - push to main where Cargo.toml's version is newer than the latest tag
+#     (i.e. a "chore: release vX.Y.Z" PR was merged) — the tag is created here
+#   - push of a v* tag (manual escape hatch) or workflow_dispatch with a tag
+#
+# Gate: the tag must match Cargo.toml's version and have a CHANGELOG.md
+# section, which becomes the GitHub release notes.
+
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.3.0) — created by this workflow"
+        description: "Release tag (e.g. v0.4.0) — must match Cargo.toml"
         required: true
 
 permissions:
@@ -14,19 +23,50 @@ permissions:
   packages: write
 
 jobs:
-  # Gate: the tag must match Cargo.toml's version and have a CHANGELOG.md
-  # section, which becomes the GitHub release notes.
-  notes:
+  # Decide whether this run is a release and which tag it releases.
+  gate:
     runs-on: ubuntu-latest
-    env:
-      TAG: ${{ inputs.tag || github.ref_name }}
+    outputs:
+      tag: ${{ steps.gate.outputs.tag }}
+      releasing: ${{ steps.gate.outputs.releasing }}
     steps:
       - uses: actions/checkout@v7
-      - name: Verify tag matches Cargo.toml version
+        with:
+          fetch-depth: 0
+      - name: Decide release tag
+        id: gate
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          tag="${TAG#v}"
           cargo_version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          [ "$tag" = "$cargo_version" ] || { echo "::error::tag v$tag != Cargo.toml version $cargo_version"; exit 1; }
+          last_tag=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+            [ "$tag" = "v$cargo_version" ] || { echo "::error::input tag $tag != Cargo.toml version $cargo_version"; exit 1; }
+          elif [[ "$REF_NAME" == v* ]]; then
+            tag="$REF_NAME"
+            [ "$tag" = "v$cargo_version" ] || { echo "::error::tag $tag != Cargo.toml version $cargo_version"; exit 1; }
+          else
+            tag="v$cargo_version"
+            if [ "$tag" = "$last_tag" ]; then
+              echo "Cargo.toml version $tag already tagged — nothing to release"
+              echo "releasing=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "releasing=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "releasing $tag (latest tag: ${last_tag:-none})"
+
+  notes:
+    needs: gate
+    if: needs.gate.outputs.releasing == 'true'
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.gate.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
       - name: Extract release notes from CHANGELOG.md
         run: |
           awk '/^## \['"${TAG#v}"'\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > notes.md
@@ -38,7 +78,8 @@ jobs:
           body_path: notes.md
 
   binaries:
-    needs: notes
+    needs: gate
+    if: needs.gate.outputs.releasing == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -78,11 +119,12 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ needs.gate.outputs.tag }}
           files: mcp-multiplexer-${{ matrix.target }}.*
 
   crates:
-    needs: binaries
+    needs: [gate, binaries]
+    if: needs.gate.outputs.releasing == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -92,7 +134,8 @@ jobs:
       - run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   docker:
-    needs: notes
+    needs: gate
+    if: needs.gate.outputs.releasing == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -107,4 +150,48 @@ jobs:
           push: true
           tags: |
             ghcr.io/johgirard/mcp-multiplexer:latest
-            ghcr.io/johgirard/mcp-multiplexer:${{ inputs.tag || github.ref_name }}
+            ghcr.io/johgirard/mcp-multiplexer:${{ needs.gate.outputs.tag }}
+
+  # Prove every install path the README/setup skill advertises actually works
+  # on the version that just went out.
+  verify-install:
+    needs: [gate, binaries, crates, docker]
+    if: needs.gate.outputs.releasing == 'true'
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.gate.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Plugin manifests valid and version in sync
+        run: |
+          jq empty .claude-plugin/plugin.json .claude-plugin/marketplace.json
+          plugin_version=$(jq -r .version .claude-plugin/plugin.json)
+          [ "$plugin_version" = "${TAG#v}" ] || { echo "::error::plugin.json $plugin_version != $TAG"; exit 1; }
+      - name: Prebuilt binaries downloadable
+        run: |
+          for asset in \
+            mcp-multiplexer-x86_64-unknown-linux-musl.tar.gz \
+            mcp-multiplexer-aarch64-unknown-linux-musl.tar.gz \
+            mcp-multiplexer-x86_64-apple-darwin.tar.gz \
+            mcp-multiplexer-aarch64-apple-darwin.tar.gz \
+            mcp-multiplexer-x86_64-pc-windows-msvc.zip; do
+            code=$(curl -fsIL -o /dev/null -w '%{http_code}' \
+              "https://github.com/johgirard/mcp-multiplexer/releases/latest/download/$asset" || true)
+            echo "$code $asset"
+            [ "$code" = 200 ] || { echo "::error::$asset not downloadable ($code)"; exit 1; }
+          done
+      - name: crates.io serves the new version
+        run: |
+          expected="${TAG#v}"
+          for i in 1 2 3 4 5 6; do
+            actual=$(curl -fsSL -A "mcp-multiplexer-release-check (https://github.com/johgirard/mcp-multiplexer)" \
+              https://crates.io/api/v1/crates/mcp-multiplexer | jq -r .crate.max_version || true)
+            [ "$actual" = "$expected" ] && break
+            echo "crates.io max_version is '${actual:-unreachable}', expected $expected — retry $i/6"
+            sleep 20
+          done
+          [ "$actual" = "$expected" ] || { echo "::error::crates.io never showed $expected"; exit 1; }
+      - name: ghcr.io image manifest exists
+        run: |
+          docker buildx imagetools inspect "ghcr.io/johgirard/mcp-multiplexer:$TAG"
+          docker buildx imagetools inspect "ghcr.io/johgirard/mcp-multiplexer:latest"
