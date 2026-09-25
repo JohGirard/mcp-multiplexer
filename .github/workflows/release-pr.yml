@@ -1,0 +1,61 @@
+name: Release PR
+
+# Opens (or refreshes) a release PR whenever main has releasable commits:
+# bump Cargo.toml/Cargo.lock/plugin.json + draft the CHANGELOG section,
+# push release/vX.Y.Z, open the PR. Merging that PR is what triggers
+# release.yml (tag + binaries + crates.io + docker + install verification).
+#
+# Commit messages must be conventional (feat:/fix:/...) — the bump level is
+# derived from them. See CONTRIBUTING.md "Release flow".
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      level:
+        description: "Bump level (default: auto from commit messages)"
+        required: false
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+        default: auto
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Skip release commits
+        id: skip
+        run: |
+          # A release merge must not immediately open the next release PR.
+          if git log -1 --pretty=%s | grep -q '^chore: release v'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "head commit is a release commit — skipping"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Prepare release PR
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          args=()
+          level="${{ inputs.level }}"
+          if [ -n "$level" ] && [ "$level" != "auto" ]; then
+            args+=(--level "$level")
+          fi
+          scripts/release-prepare.sh "${args[@]}"

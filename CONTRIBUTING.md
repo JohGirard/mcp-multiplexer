@@ -58,6 +58,41 @@ cargo run -- --dump-schema > schema.json
 
 Please don't open a public issue — see [SECURITY.md](SECURITY.md).
 
+## Release flow
+
+Releases are automated — you never tag or bump versions by hand:
+
+1. **Land PRs on `main`** with conventional commit subjects (`feat:`, `fix:`,
+   `perf:`, …). The subject prefix drives the next version number.
+2. **A release PR opens itself.** On every push to `main`,
+   `release-pr.yml` runs `scripts/release-prepare.sh`, which computes the
+   bump from the commits since the last tag (`feat`/`perf` → minor,
+   `fix`/`refactor` → patch, breaking → minor on 0.x / major on ≥1.0; only
+   `chore`/`docs`/`ci` → no release), then updates every version reference —
+   `Cargo.toml`, `Cargo.lock`, `.claude-plugin/plugin.json` — drafts the
+   `CHANGELOG.md` section (grouped bullets + compare link), and opens
+   `release/vX.Y.Z`.
+3. **Review and merge the release PR.** The changelog section is generated
+   from commit subjects — edit the PR to make the prose read like the
+   sections above before merging. This is the curation step; the release
+   notes are exactly what ships.
+4. **Merging triggers `release.yml`.** It verifies the version was actually
+   bumped, creates the tag and GitHub release, builds binaries ×5, publishes
+   to crates.io, pushes the Docker image, then a `verify-install` job proves
+   every install path works: release assets download, crates.io serves the
+   version, the ghcr.io manifest exists, and the plugin manifest is in sync.
+
+CI's `versions` job fails any PR where `.claude-plugin/plugin.json` and
+`Cargo.toml` disagree, so the plugin manifest can't silently go stale again.
+
+Manual escape hatches:
+
+- Cut a release without releasable commits (e.g. dependency-only) —
+  *Actions → Release PR → Run workflow* with an explicit level.
+- Re-run a botched release — *Actions → Release → Run workflow* with the tag
+  (must match `Cargo.toml`).
+- Test the whole flow locally: `scripts/release-prepare.sh --dry-run`.
+
 ## License
 
 By contributing you agree your work is licensed under the project's

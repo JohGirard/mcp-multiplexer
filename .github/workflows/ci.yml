@@ -27,6 +27,22 @@ jobs:
       - name: schema.json matches --dump-schema
         run: cargo run --locked -- --dump-schema | diff - schema.json
 
+  # Every version reference must move together — the plugin manifest shipped
+  # stale for two releases before this check existed.
+  versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: plugin.json version matches Cargo.toml
+        run: |
+          jq empty .claude-plugin/plugin.json .claude-plugin/marketplace.json
+          cargo_version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          plugin_version=$(jq -r .version .claude-plugin/plugin.json)
+          if [ "$cargo_version" != "$plugin_version" ]; then
+            echo "::error::plugin.json ($plugin_version) != Cargo.toml ($cargo_version) — bump both via scripts/release-prepare.sh"
+            exit 1
+          fi
+
   docker:
     runs-on: ubuntu-latest
     steps:
