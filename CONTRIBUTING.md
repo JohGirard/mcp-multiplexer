@@ -93,6 +93,18 @@ Manual escape hatches:
   (must match `Cargo.toml`).
 - Test the whole flow locally: `scripts/release-prepare.sh --dry-run`.
 
+Tag creation and `RELEASE_TOKEN`:
+
+The repo's `tags` ruleset restricts ref creation, and GitHub doesn't allow
+`github-actions[bot]` as a bypass actor on personal-repo rulesets — so the
+default `GITHUB_TOKEN` cannot create release tags. `release.yml` therefore
+uses the `RELEASE_TOKEN` secret when set and falls back to `GITHUB_TOKEN`.
+Set up the secret once: a fine-grained PAT scoped to this repository with
+**Contents: read/write** only (its owner must be a bypass actor on the
+`tags` ruleset — repo admins are by default). Without the secret, releases
+still work via the manual hatch: push the `vX.Y.Z` tag yourself (bypass
+actors may), and the tag push triggers `release.yml` as usual.
+
 ## License
 
 By contributing you agree your work is licensed under the project's
