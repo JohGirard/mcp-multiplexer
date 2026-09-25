@@ -4,6 +4,19 @@ All notable changes to mcp-multiplexer. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.5.0] - 2026-09-25
+
+### Added
+
+- The OAuth authorization page now opens in the system browser automatically
+  when a flow starts; headless machines keep the printed URL as fallback
+
+### Fixed
+
+- Proxied `tools/call` results now populate `resultType: "complete"` (SEP-2322).
+  Clients on protocol 2026-07-28 rejected every proxied call — meta-tool and
+  exposed alike — as a malformed result
+
 ## [0.4.0] - 2026-09-24
 
 ### Fixed
@@ -97,6 +110,7 @@ Initial release.
 - Prebuilt binaries for Linux, macOS, and Windows; crates.io and ghcr.io
   publishing.
 
+[0.5.0]: https://github.com/johgirard/mcp-multiplexer/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/johgirard/mcp-multiplexer/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/johgirard/mcp-multiplexer/compare/v0.2.1...v0.3.1
 [0.2.1]: https://github.com/johgirard/mcp-multiplexer/compare/v0.2.0...v0.2.1
