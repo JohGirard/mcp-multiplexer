@@ -279,7 +279,7 @@ impl Upstreams {
             params = params.with_arguments(a);
         }
         match client.call_tool(params.clone()).await {
-            Ok(r) => Ok(r),
+            Ok(r) => Ok(complete_result_type(r)),
             Err(err) => {
                 // ponytail: heuristic — any call error drops the (possibly dead) client, then
                 // reconnects, re-lists and retries exactly once; covers dead upstreams and stale index
