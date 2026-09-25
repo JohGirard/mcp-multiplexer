@@ -28,6 +28,17 @@ pub struct Upstreams {
 
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 10;
 
+/// Upstreams on a pre-2026-07-28 protocol omit `resultType` (SEP-2322) on
+/// tools/call results; clients that negotiated 2026-07-28+ require it. A
+/// result that arrives as a plain CallToolResult is complete by definition —
+/// the server handler strips the discriminator again for legacy peers.
+fn complete_result_type(mut result: CallToolResult) -> CallToolResult {
+    if result.result_type.is_none() {
+        result.result_type = Some(rmcp::model::ResultType::COMPLETE);
+    }
+    result
+}
+
 async fn connect(
     e: &Entry,
 ) -> anyhow::Result<rmcp::service::RunningService<rmcp::service::RoleClient, ()>> {
@@ -69,7 +80,9 @@ async fn connect(
                     None => {
                         let auth_url = oauth.begin_flow(cfg, store).await?;
                         bail!(
-                            "server requires OAuth authorization. Open in a browser: {auth_url} — then retry. Headless? Call authorize_server with the final redirect URL as pasted_url."
+                            "server requires OAuth authorization — your browser should have opened {auth_url}. \
+                             If it didn't, open the URL manually, then retry. \
+                             Headless? Call authorize_server with the final redirect URL as pasted_url."
                         );
                     }
                 }
@@ -274,7 +287,7 @@ impl Upstreams {
                 e.client.write().await.take();
                 let client = self.ensure(name).await?;
                 self.refresh_inner(name, &client).await.ok();
-                Ok(client.call_tool(params).await?)
+                Ok(complete_result_type(client.call_tool(params).await?))
             }
         }
     }

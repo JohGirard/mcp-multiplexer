@@ -5,13 +5,23 @@ use rmcp::service::ClientLifecycleMode;
 /// = 2025-11-25, and the legacy `initialize` handshake caps at the newest
 /// legacy version) so the e2e covers the SEP-2549 cache-hints code path.
 struct ModernClient;
-
 impl rmcp::ClientHandler for ModernClient {
     fn get_info(&self) -> rmcp::model::ClientConfig {
         let mut cfg = rmcp::model::ClientConfig::default();
         cfg.protocol_version = rmcp::model::ProtocolVersion::V_2026_07_28;
         cfg
     }
+}
+
+/// SEP-2322: on protocol 2026-07-28 every tools/call result must carry
+/// `resultType: "complete"` — strict clients (Claude Code et al.) reject the
+/// response as malformed otherwise. The field is what the wire carried:
+/// `None` after a tolerant client-side deserialize means mux sent nothing.
+fn assert_result_type(result: &rmcp::model::CallToolResult, what: &str) {
+    assert!(
+        result.result_type.as_ref().is_some_and(|t| t.is_complete()),
+        "missing resultType on tools/call result: {what}"
+    );
 }
 
 #[tokio::test]
@@ -98,6 +108,7 @@ async fn end_to_end() {
         .await
         .unwrap();
     assert_eq!(r.content[0].as_text().unwrap().text, "5");
+    assert_result_type(&r, "meta call_tool");
 
     // direct exposed call
     let mut args = serde_json::Map::new();
@@ -107,6 +118,7 @@ async fn end_to_end() {
         .await
         .unwrap();
     assert_eq!(r.content[0].as_text().unwrap().text, "echo: direct");
+    assert_result_type(&r, "exposed b__echo");
 
     // refresh_tools re-indexes all servers
     let r = client
