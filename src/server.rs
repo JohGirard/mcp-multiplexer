@@ -254,10 +254,10 @@ impl Aggregator {
             None => match self.ups.oauth_begin(&server).await? {
                 None => Ok(format!("{server} is already authorized")),
                 Some(url) => Ok(format!(
-                    "Authorization required for {server}.\n\
-                     1. Open in a browser: {url}\n\
-                     2. Approve access — the redirect completes automatically.\n\
-                     3. Retry your call.\n\
+                    "Authorization required for {server} — your browser should have opened the approval page.\n\
+                     If it didn't: open {url}\n\
+                     Approve access — the redirect completes automatically.\n\
+                     Then retry your call.\n\
                      Headless? Open the URL anywhere, then call authorize_server again \
                      with pasted_url set to the final redirect URL."
                 )),

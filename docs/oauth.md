@@ -22,8 +22,10 @@ protected-resource metadata (RFC 9728), dynamic client registration
 }
 ```
 
-1. Call any tool (or `authorize_server`) — you get an authorization URL.
-2. Open it, log in, approve. A temporary `127.0.0.1` listener catches the
+1. Call any tool (or `authorize_server`) — your browser opens the
+   authorization page automatically (the URL is also included in the message
+   in case it can't open).
+2. Approve the login. A temporary `127.0.0.1` listener catches the
    redirect and completes the exchange automatically.
 3. Retry the call. Done — no re-login on restart, tokens auto-refresh.
 
@@ -39,7 +41,7 @@ URL with instructions, and its result tells the model what to do next.
     → .well-known/oauth-authorization-server)
 3. mux: register a client dynamically (skipped if you set oauth_client_id)
 4. mux → you: authorization URL (scope auto-discovered, PKCE challenge,
-   resource indicator)
+   resource indicator) — mux opens it in your browser automatically
 5. browser: you approve → redirect to http://127.0.0.1:<port>/callback
 6. mux: code exchange → tokens.json → retry succeeds
 ```

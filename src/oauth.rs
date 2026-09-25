@@ -231,7 +231,12 @@ impl OAuth {
         {
             let st = g.as_mut().unwrap();
             if matches!(st, OAuthState::Session(_)) {
-                return st.get_authorization_url().await.map_err(|e| anyhow!("{e}"));
+                let url = st
+                    .get_authorization_url()
+                    .await
+                    .map_err(|e| anyhow!("{e}"))?;
+                open_browser(&url);
+                return Ok(url);
             }
         }
         // bind first: the port is part of the redirect URI
@@ -286,6 +291,7 @@ impl OAuth {
             .get_authorization_url()
             .await
             .map_err(|e| anyhow!("{e}"))?;
+        open_browser(&url);
         let me = self.clone();
         let task = tokio::spawn(async move {
             let Ok(callback_url) = wait_for_callback(listener).await else {
@@ -316,6 +322,15 @@ impl OAuth {
         st.handle_callback_url(pasted)
             .await
             .map_err(|e| anyhow!("redirect URL rejected: {e} — if this persists, restart the flow via authorize_server"))
+    }
+}
+
+/// Best-effort: pop the system browser with the authorization URL.
+/// Headless machines have no browser — the caller still surfaces the URL.
+fn open_browser(url: &str) {
+    match webbrowser::open(url) {
+        Ok(()) => tracing::info!("opened OAuth authorization page in browser"),
+        Err(e) => tracing::warn!(%e, "no browser opened; authorize via the printed URL"),
     }
 }
 
