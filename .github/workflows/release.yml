@@ -7,6 +7,11 @@ name: Release
 #
 # Gate: the tag must match Cargo.toml's version and have a CHANGELOG.md
 # section, which becomes the GitHub release notes.
+#
+# Token: creating the tag ref is blocked for GITHUB_TOKEN by the repo's
+# "tags" ruleset (github-actions can't be a bypass actor on personal repos),
+# so release creation uses secrets.RELEASE_TOKEN when set — see
+# CONTRIBUTING.md "Tag creation and RELEASE_TOKEN".
 
 on:
   push:
@@ -74,6 +79,10 @@ jobs:
       - name: Create GitHub Release with notes
         uses: softprops/action-gh-release@v3
         with:
+          # RELEASE_TOKEN: fine-grained PAT whose owner is a ruleset bypass
+          # actor — GITHUB_TOKEN can't create tags under the "tags" ruleset
+          # (github-actions isn't an allowed bypass actor on personal repos).
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
           tag_name: ${{ env.TAG }}
           body_path: notes.md
 
@@ -119,6 +128,7 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
           tag_name: ${{ needs.gate.outputs.tag }}
           files: mcp-multiplexer-${{ matrix.target }}.*
 
