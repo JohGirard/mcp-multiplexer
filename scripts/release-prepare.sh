@@ -48,8 +48,16 @@ log "current version: $current_version (last tag: ${last_tag:-none})"
 
 # ---------------------------------------------------------------- commits ---
 range="${last_tag:+$last_tag..}HEAD"
-# %x1f separates subject from body, %x1e separates commits
-mapfile -t commits < <(git log --no-merges --pretty=$'%s%x1f%b%x1e' "$range")
+# %x1f separates subject from body, %x1e separates commits — the delimiter
+# must be %x1e (not \n) because bodies span lines; the empty record git
+# leaves after the trailing separator is dropped.
+mapfile -d $'\x1e' -t raw < <(git log --no-merges --pretty=$'%s%x1f%b%x1e' "$range")
+commits=()
+for entry in "${raw[@]}"; do
+    entry=${entry#$'\n'}
+    subject=${entry%%$'\x1f'*}
+    [ -n "$subject" ] && commits+=("$entry")
+done
 if [ ${#commits[@]} -eq 0 ]; then
     log "no commits since ${last_tag:-the beginning} — nothing to release"
     exit 0
@@ -150,7 +158,18 @@ fi
 sed -i "0,/^version = \".*\"/s//version = \"$new_version\"/" Cargo.toml
 jq --arg v "$new_version" '.version = $v' .claude-plugin/plugin.json > .claude-plugin/plugin.json.tmp
 mv .claude-plugin/plugin.json.tmp .claude-plugin/plugin.json
-cargo check --offline --quiet  # sync Cargo.lock's own package version
+# Sync Cargo.lock's own package version textually — `cargo check --offline`
+# needs a warm registry cache, which fresh CI runners don't have.
+VERSION="$new_version" python3 - <<'EOF'
+import os, re, pathlib
+
+lock = pathlib.Path("Cargo.lock")
+text = lock.read_text()
+pattern = r'(\[\[package\]\]\nname = "mcp-multiplexer"\nversion = ")[^"]+(")'
+new_text, n = re.subn(pattern, rf"\g<1>{os.environ['VERSION']}\g<2>", text)
+assert n == 1, "mcp-multiplexer entry not found exactly once in Cargo.lock"
+lock.write_text(new_text)
+EOF
 
 SECTION="$section" COMPARE="$compare" python3 - <<'EOF'
 import os, re, pathlib
