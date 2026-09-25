@@ -4,6 +4,58 @@ All notable changes to mcp-multiplexer. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [0.5.0] - 2026-09-25
+
+### Fixed
+
+- resultType on proxied tools/call (SEP-2322) + automatic OAuth browser redirect (#13)
+
+### Internal
+
+- fix release-prepare.sh lock sync on fresh CI runners
+- has none, so the Cargo.toml version bump could not sync into Cargo.lock
+- ("no matching package named anyhow found"). Patch the lock's own
+- package entry textually instead — deterministic, offline-safe, and
+- ci.yml's locked builds on the release PR validate it afterwards.
+- 
+- 
+- Clients that negotiate protocol 2026-07-28 (discover lifecycle) require
+- resultType on every tools/call result. Mux's upstream links always use the
+- legacy handshake (<= 2025-11-25), so proxied results arrive without the
+- field and were forwarded verbatim — strict clients rejected every call_tool
+- (meta-tool and exposed alike) as malformed. Normalize at the ups.call
+- boundary; the server handler still strips the discriminator for legacy
+- peers. Regression-asserted in the discover-lifecycle e2e.
+- 
+- * feat: open the OAuth authorization page in the browser automatically
+- 
+- begin_flow returned the provider URL as text only (error string or the
+- authorize_server tool result), so nothing happened unless the client parsed
+- the URL out of the message. The callback listener already binds 127.0.0.1
+- on the mux host, so open the system browser there on both the new-flow and
+- in-progress paths; headless machines fail gracefully and keep the printed
+- URL. Messages and docs updated.
+- automated releases — release PR flow, install verification, version sync (#12)
+- nothing checked install paths after publishing.
+- 
+- Flow (documented in CONTRIBUTING.md 'Release flow'):
+- - release-pr.yml runs scripts/release-prepare.sh on every main push:
+-   derives the bump level from conventional commits since the last tag,
+-   bumps Cargo.toml / Cargo.lock / plugin.json, drafts the CHANGELOG
+-   section, and opens release/vX.Y.Z. The PR is the curation step.
+- - Merging that PR triggers release.yml: a gate job detects the version
+-   bump (normal main pushes no-op), then tag + GitHub release + binaries x5
+-   + crates.io + docker as before, plus a new verify-install job proving
+-   every advertised install path works on the released version.
+- - ci.yml gains a versions job: plugin.json must match Cargo.toml.
+- 
+- Verified locally: script bump matrix (feat/fix/chore/breaking/override),
+- gate logic for all trigger modes, cargo install --path, release asset
+- downloads, crates.io + ghcr.io manifests for v0.4.0 (the crates.io check
+- needs a User-Agent — 403 otherwise, caught during verification).
+- 
+- Also fixes the stale plugin.json (0.2.1 -> 0.4.0).
+
 ## [0.4.0] - 2026-09-24
 
 ### Fixed
@@ -97,6 +149,7 @@ Initial release.
 - Prebuilt binaries for Linux, macOS, and Windows; crates.io and ghcr.io
   publishing.
 
+[0.5.0]: https://github.com/johgirard/mcp-multiplexer/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/johgirard/mcp-multiplexer/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/johgirard/mcp-multiplexer/compare/v0.2.1...v0.3.1
 [0.2.1]: https://github.com/johgirard/mcp-multiplexer/compare/v0.2.0...v0.2.1
